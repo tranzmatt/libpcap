@@ -152,6 +152,16 @@ struct enhanced_packet_block {
 };
 
 /*
+ * Custom fields for the Enhanced Packet Block as per
+ * https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-03.html#section_epb
+ */
+
+#define OPT_CUSTOM_STRING_SAFE	2988	/* custom non-terminated string, safe to copy */
+#define OPT_CUSTOM_BYTES_SAFE	2989	/* custom binary octet, safe to copy */
+#define OPT_CUSTOM_STRING	19372	/* custom non-terminated string, do not copy */
+#define OPT_CUSTOM_BYTES	19373	/* custom binary octet, do not copy */
+
+/*
  * Simple Packet Block.
  */
 #define BT_SPB			0x00000003
@@ -456,6 +466,63 @@ get_optvalue_from_block_data(struct block_cursor *cursor,
 	}
 
 	return (optvalue);
+}
+
+
+static int
+process_epb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
+    uint64_t *tsoffset, int *is_binary, char *errbuf)
+{
+	struct option_header *opthdr;
+	void *optvalue;
+	int saw_tsresol, saw_tsoffset;
+	uint8_t tsresol_opt;
+	u_int i;
+
+	saw_tsresol = 0;
+	saw_tsoffset = 0;
+	while (cursor->data_remaining != 0) {
+		/*
+		 * Get the option header.
+		 */
+		opthdr = get_opthdr_from_block_data(p, cursor, errbuf);
+		if (opthdr == NULL) {
+			/*
+			 * Option header is cut short.
+			 */
+			return (-1);
+		}
+
+		/*
+		 * Get option value.
+		 */
+		optvalue = get_optvalue_from_block_data(cursor, opthdr,
+		    errbuf);
+		if (optvalue == NULL) {
+			/*
+			 * Option value is cut short.
+			 */
+			return (-1);
+		}
+
+		switch (opthdr->option_code) {
+
+		case OPT_ENDOFOPT:
+			if (opthdr->option_length != 0) {
+				snprintf(errbuf, PCAP_ERRBUF_SIZE,
+				    "Enhanced Packet Block has opt_endofopt option with length %u != 0",
+				    opthdr->option_length);
+				return (-1);
+			}
+			goto done;
+
+		default:
+			break;
+		}
+	}
+
+done:
+	return (0);
 }
 
 static int

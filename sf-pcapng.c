@@ -470,17 +470,12 @@ get_optvalue_from_block_data(struct block_cursor *cursor,
 
 
 static int
-process_epb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
-    uint64_t *tsoffset, int *is_binary, char *errbuf)
+process_epb_options(pcap_t *p, struct block_cursor *cursor, char *errbuf)
 {
 	struct option_header *opthdr;
 	void *optvalue;
-	int saw_tsresol, saw_tsoffset;
-	uint8_t tsresol_opt;
 	u_int i;
 
-	saw_tsresol = 0;
-	saw_tsoffset = 0;
 	while (cursor->data_remaining != 0) {
 		/*
 		 * Get the option header.
@@ -496,8 +491,7 @@ process_epb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
 		/*
 		 * Get option value.
 		 */
-		optvalue = get_optvalue_from_block_data(cursor, opthdr,
-		    errbuf);
+		optvalue = get_optvalue_from_block_data(cursor, opthdr, errbuf);
 		if (optvalue == NULL) {
 			/*
 			 * Option value is cut short.
@@ -515,6 +509,21 @@ process_epb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
 				return (-1);
 			}
 			goto done;
+
+        case OPT_COMMENT:
+            break;
+
+        case OPT_CUSTOM_STRING_SAFE:
+            break;
+
+        case OPT_CUSTOM_BYTES_SAFE:
+            break;
+
+        case OPT_CUSTOM_STRING:
+            break;
+
+        case OPT_CUSTOM_BYTES:
+            break;
 
 		default:
 			break;
@@ -1205,6 +1214,11 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			    p->errbuf);
 			if (epbp == NULL)
 				return (-1);	/* error */
+
+            /*
+             * Get any options.
+             */
+            status = process_epb_options(p, &cursor, p->errbuf);
 
 			/*
 			 * Byte-swap it if necessary.

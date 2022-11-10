@@ -67,7 +67,7 @@ struct block_trailer {
  * Common options.
  */
 #define OPT_ENDOFOPT	0	/* end of options */
-#define OPT_COMMENT	1	/* comment string */
+#define OPT_COMMENT  	1	/* comment string */
 
 /*
  * Option header.
@@ -152,6 +152,24 @@ struct enhanced_packet_block {
 };
 
 /*
+* Valid Option Code for the EPB
+* name / code / len / multiple?
+* epb_flags	2	4	no
+* epb_hash	3	variable, minimum hash type-dependent	yes
+* epb_dropcount	4	8	no
+* epb_packetid	5	8	no
+* epb_queue	6	4	no
+* epb_verdict	7	variable, minimum verdict type-dependent	yes
+*/
+
+#define EPB_FLAG 		2
+#define EPB_HASH 		3
+#define EPB_DROPCOUNT 	4
+#define EPB_PACKETID 	5
+#define EPB_QUEUE 		6
+#define EPB_VERDICT 	7
+
+/*
  * Custom fields for the Enhanced Packet Block as per
  * https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-03.html#section_epb
  */
@@ -160,6 +178,14 @@ struct enhanced_packet_block {
 #define OPT_CUSTOM_BYTES_SAFE	2989	/* custom binary octet, safe to copy */
 #define OPT_CUSTOM_STRING	19372	/* custom non-terminated string, do not copy */
 #define OPT_CUSTOM_BYTES	19373	/* custom binary octet, do not copy */
+
+/*
+ * EPB Options
+ */
+struct option_package {
+	struct option_header header;
+	u_char	*payload;
+};
 
 /*
  * Simple Packet Block.
@@ -261,8 +287,7 @@ struct pcap_ng_sf {
 	 sizeof (struct block_trailer))
 
 static void pcap_ng_cleanup(pcap_t *p);
-static int pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr,
-    u_char **data);
+static int pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data);
 
 static int
 read_bytes(FILE *fp, void *buf, size_t bytes_to_read, int fail_on_eof,
@@ -422,6 +447,38 @@ get_from_block_data(struct block_cursor *cursor, size_t chunk_size,
 	return (data);
 }
 
+
+static void *
+get_from_block_data_and_pad(struct block_cursor *cursor, size_t chunk_size,
+    char *errbuf)
+{
+	size_t padded_chunk_size;
+	void *data;
+
+	/*
+	 * Make sure we have the specified amount of data remaining in
+	 * the block data.
+	 */
+	if (cursor->data_remaining < chunk_size) {
+		snprintf(errbuf, PCAP_ERRBUF_SIZE,
+		    "block of type %u in pcapng dump file is too short",
+		    cursor->block_type);
+		return (NULL);
+	}
+
+	/* Pad option length to 4-byte boundary */
+	padded_chunk_size = ((chunk_size + 3)/4)*4;
+
+	/*
+	 * Return the current pointer, and skip past the chunk.
+	 */
+	data = cursor->data;
+	cursor->data += padded_chunk_size;
+	cursor->data_remaining -= padded_chunk_size;
+	return (data);
+}
+
+
 static struct option_header *
 get_opthdr_from_block_data(pcap_t *p, struct block_cursor *cursor, char *errbuf)
 {
@@ -470,11 +527,29 @@ get_optvalue_from_block_data(struct block_cursor *cursor,
 
 
 static int
-process_epb_options(pcap_t *p, struct block_cursor *cursor, char *errbuf)
+process_epb_options(pcap_t *p, struct block_cursor *cursor, struct option_package *the_options, char *errbuf)
 {
 	struct option_header *opthdr;
 	void *optvalue;
-	u_int i;
+	u_int option_index = 0, num_options = 0;
+
+	struct block_cursor tmpcursor, *tmpcursor_p = &tmpcursor;
+
+	memcpy((void *)tmpcursor_p, (void *)cursor, sizeof(struct block_cursor));
+
+	while (tmpcursor_p->data_remaining != 0) {
+		opthdr = get_opthdr_from_block_data(p, tmpcursor_p, errbuf);
+		if (opthdr == NULL) {
+			/*
+			 * Option header is cut short.
+			 */
+			return (-1);
+		}
+		free(opthdr);
+		num_options++;
+	}
+
+	the_options = (struct option_package *)calloc(num_options, sizeof(struct option_package));
 
 	while (cursor->data_remaining != 0) {
 		/*
@@ -508,30 +583,35 @@ process_epb_options(pcap_t *p, struct block_cursor *cursor, char *errbuf)
 				    opthdr->option_length);
 				return (-1);
 			}
-			goto done;
+			break;
 
-        case OPT_COMMENT:
-            break;
-
+		/*
+		 * We don't yet have specific mechanisms for the different custom types and
+		 * it's not clear we want to?  The option code should drive how to handle it
+		 */
         case OPT_CUSTOM_STRING_SAFE:
-            break;
-
         case OPT_CUSTOM_BYTES_SAFE:
-            break;
-
         case OPT_CUSTOM_STRING:
-            break;
-
         case OPT_CUSTOM_BYTES:
+			// These options require minimum length 4
+			if (opthdr->option_length < 4) {
+				snprintf(errbuf, PCAP_ERRBUF_SIZE,
+				    "Enhanced Packet Block has option %d option with illegal length %u",
+				    opthdr->option_code, opthdr->option_length);
+				return (-1);
+			}
+        case OPT_COMMENT:
+			the_options[option_index].header.option_code = opthdr->option_code;
+			the_options[option_index].header.option_length = opthdr->option_length;
+			the_options[option_index].payload = optvalue;
             break;
-
 		default:
 			break;
 		}
 	}
 
 done:
-	return (0);
+	return (num_options);
 }
 
 static int
@@ -561,8 +641,7 @@ process_idb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
 		/*
 		 * Get option value.
 		 */
-		optvalue = get_optvalue_from_block_data(cursor, opthdr,
-		    errbuf);
+		optvalue = get_optvalue_from_block_data(cursor, opthdr, errbuf);
 		if (optvalue == NULL) {
 			/*
 			 * Option value is cut short.
@@ -1179,7 +1258,7 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 {
 	struct pcap_ng_sf *ps = p->priv;
 	struct block_cursor cursor;
-	int status;
+	int status, is_epb = 0;
 	struct enhanced_packet_block *epbp;
 	struct simple_packet_block *spbp;
 	struct packet_block *pbp;
@@ -1198,6 +1277,7 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 		 * Read the block type and length; those are common
 		 * to all blocks.
 		 */
+		is_epb = 0;
 		status = read_block(fp, p, &cursor, p->errbuf);
 		if (status == 0)
 			return (0);	/* EOF */
@@ -1215,10 +1295,7 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			if (epbp == NULL)
 				return (-1);	/* error */
 
-            /*
-             * Get any options.
-             */
-            status = process_epb_options(p, &cursor, p->errbuf);
+			is_epb = 1;
 
 			/*
 			 * Byte-swap it if necessary.
@@ -1589,11 +1666,26 @@ found:
 	/*
 	 * Get a pointer to the packet data.
 	 */
-	*data = get_from_block_data(&cursor, hdr->caplen, p->errbuf);
+	*data = get_from_block_data_and_pad(&cursor, hdr->caplen, p->errbuf);
 	if (*data == NULL)
-		return (-1);
+		return(-1);
 
 	pcap_post_process(p->linktype, p->swapped, hdr, *data);
+
+	/*
+	 * Get any options.
+	*/
+	if (is_epb) {
+		/*
+		 * Put remaining data into epb options pointer
+		 */
+		u_char *epb_options =  get_from_block_data(&cursor, cursor.data_remaining, p->errbuf);
+		if (*epb_options == NULL)
+			return (-1);
+
+		//process epb options
+
+	}
 
 	return (1);
 }

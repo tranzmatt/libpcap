@@ -1,0 +1,585 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install",
+			"install_manpage_symlink"
+		],
+		"files" : 
+		[
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3235,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3238,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3239,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3240,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3241,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3315,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3316,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3336,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3347,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3348,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 10
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3349,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 12
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3350,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 14
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3351,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 16
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3352,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 18
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3353,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 20
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3354,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 22
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3355,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 24
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3356,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 26
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3357,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 28
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3358,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 30
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3359,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 32
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3360,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 34
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3361,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 36
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3362,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 38
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3363,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 40
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 3364,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3096,
+				"parent" : 42
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3372,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 3380,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "/usr/local/lib",
+			"paths" : 
+			[
+				"libpcap.so.1.11.0-PRE-GIT",
+				"libpcap.so.1"
+			],
+			"targetId" : "pcap::@6890427a1f51a3e7e1df",
+			"targetIndex" : 10,
+			"targetInstallNamelink" : "skip",
+			"type" : "target"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "/usr/local/lib",
+			"paths" : 
+			[
+				"libpcap.so"
+			],
+			"targetId" : "pcap::@6890427a1f51a3e7e1df",
+			"targetIndex" : 10,
+			"targetInstallNamelink" : "only",
+			"type" : "target"
+		},
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "/usr/local/lib",
+			"paths" : 
+			[
+				"libpcap.a"
+			],
+			"targetId" : "pcap_static::@6890427a1f51a3e7e1df",
+			"targetIndex" : 11,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "include/pcap",
+			"paths" : 
+			[
+				{
+					"from" : "pcap",
+					"to" : "."
+				}
+			],
+			"type" : "directory"
+		},
+		{
+			"backtrace" : 3,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"pcap.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"pcap-bpf.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"pcap-namedb.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 6,
+			"component" : "Unspecified",
+			"destination" : "bin",
+			"paths" : 
+			[
+				"build/pcap-config"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 7,
+			"component" : "Unspecified",
+			"destination" : "lib/pkgconfig",
+			"paths" : 
+			[
+				"build/libpcap.pc"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 8,
+			"component" : "Unspecified",
+			"destination" : "share/man/man1",
+			"paths" : 
+			[
+				"pcap-config.1"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 9,
+			"component" : "Unspecified",
+			"destination" : "share/man/man3",
+			"paths" : 
+			[
+				"pcap_activate.3pcap",
+				"pcap_breakloop.3pcap",
+				"pcap_can_set_rfmon.3pcap",
+				"pcap_close.3pcap",
+				"pcap_create.3pcap",
+				"pcap_datalink_name_to_val.3pcap",
+				"pcap_datalink_val_to_name.3pcap",
+				"pcap_dump.3pcap",
+				"pcap_dump_close.3pcap",
+				"pcap_dump_file.3pcap",
+				"pcap_dump_flush.3pcap",
+				"pcap_dump_ftell.3pcap",
+				"pcap_file.3pcap",
+				"pcap_fileno.3pcap",
+				"pcap_findalldevs.3pcap",
+				"pcap_freecode.3pcap",
+				"pcap_get_required_select_timeout.3pcap",
+				"pcap_get_selectable_fd.3pcap",
+				"pcap_geterr.3pcap",
+				"pcap_init.3pcap",
+				"pcap_inject.3pcap",
+				"pcap_is_swapped.3pcap",
+				"pcap_lib_version.3pcap",
+				"pcap_lookupdev.3pcap",
+				"pcap_lookupnet.3pcap",
+				"pcap_loop.3pcap",
+				"pcap_major_version.3pcap",
+				"pcap_next_ex.3pcap",
+				"pcap_offline_filter.3pcap",
+				"pcap_open_live.3pcap",
+				"pcap_set_buffer_size.3pcap",
+				"pcap_set_datalink.3pcap",
+				"pcap_set_promisc.3pcap",
+				"pcap_set_protocol_linux.3pcap",
+				"pcap_set_rfmon.3pcap",
+				"pcap_set_snaplen.3pcap",
+				"pcap_set_timeout.3pcap",
+				"pcap_setdirection.3pcap",
+				"pcap_setfilter.3pcap",
+				"pcap_setnonblock.3pcap",
+				"pcap_snapshot.3pcap",
+				"pcap_stats.3pcap",
+				"pcap_statustostr.3pcap",
+				"pcap_strerror.3pcap",
+				"pcap_tstamp_type_name_to_val.3pcap",
+				"pcap_tstamp_type_val_to_name.3pcap",
+				"build/pcap.3pcap",
+				"build/pcap_compile.3pcap",
+				"build/pcap_datalink.3pcap",
+				"build/pcap_dump_open.3pcap",
+				"build/pcap_get_tstamp_precision.3pcap",
+				"build/pcap_list_datalinks.3pcap",
+				"build/pcap_list_tstamp_types.3pcap",
+				"build/pcap_open_dead.3pcap",
+				"build/pcap_open_offline.3pcap",
+				"build/pcap_set_immediate_mode.3pcap",
+				"build/pcap_set_tstamp_precision.3pcap",
+				"build/pcap_set_tstamp_type.3pcap"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 11,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 13,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 15,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 17,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 19,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 21,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 23,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 25,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 27,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 29,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 31,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 33,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 35,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 37,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 39,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 41,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 43,
+			"component" : "Unspecified",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 44,
+			"component" : "Unspecified",
+			"destination" : "share/man/man5",
+			"paths" : 
+			[
+				"build/cbpf-savefile.5",
+				"build/pcap-savefile.5"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 45,
+			"component" : "Unspecified",
+			"destination" : "share/man/man7",
+			"paths" : 
+			[
+				"build/pcap-filter.7",
+				"build/pcap-linktype.7",
+				"build/pcap-tstamp.7"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	}
+}

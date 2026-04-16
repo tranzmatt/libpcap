@@ -31,6 +31,10 @@
  * SUCH DAMAGE.
  */
 
+#ifndef _WIN32
+  #include <netinet/in.h>
+#endif
+
 /*
  * pflog headers, at least as they exist now.
  */
@@ -77,7 +81,7 @@
 #endif
 
 /*
- * Action vaues.
+ * Action values.
  */
 #define PF_PASS			0
 #define PF_DROP			1

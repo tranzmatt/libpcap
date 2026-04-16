@@ -39,7 +39,6 @@ AC_DEFUN(AC_LBL_C_INIT_BEFORE_CC,
 [
     AC_BEFORE([$0], [AC_LBL_C_INIT])
     AC_BEFORE([$0], [AC_PROG_CC])
-    AC_BEFORE([$0], [AC_LBL_FIXINCLUDES])
     AC_BEFORE([$0], [AC_LBL_DEVEL])
     AC_ARG_WITH(gcc, [  --without-gcc           don't use gcc])
     $1=""
@@ -48,18 +47,6 @@ AC_DEFUN(AC_LBL_C_INIT_BEFORE_CC,
     fi
     if test "${CFLAGS+set}" = set; then
 	    LBL_CFLAGS="$CFLAGS"
-    fi
-    if test -z "$CC" ; then
-	    case "$host_os" in
-
-	    bsdi*)
-		    AC_CHECK_PROG(SHLICC2, shlicc2, yes, no)
-		    if test $SHLICC2 = yes ; then
-			    CC=shlicc2
-			    export CC
-		    fi
-		    ;;
-	    esac
     fi
     if test -z "$CC" -a "$with_gcc" = no ; then
 	    CC=cc
@@ -94,7 +81,6 @@ dnl	LBL_CFLAGS
 dnl
 AC_DEFUN(AC_LBL_C_INIT,
 [
-    AC_BEFORE([$0], [AC_LBL_FIXINCLUDES])
     AC_BEFORE([$0], [AC_LBL_DEVEL])
     AC_BEFORE([$0], [AC_LBL_SHLIBS_INIT])
     if test "$GCC" = yes ; then
@@ -141,61 +127,6 @@ AC_DEFUN(AC_LBL_C_INIT,
 		    ac_lbl_cc_dont_try_gcc_dashW=yes
 		    ;;
 
-	    irix*)
-		    #
-		    # MIPS C, which is what we presume we're using, doesn't
-		    # necessarily exit with a non-zero exit status if we
-		    # hand it an invalid -W flag, can't be forced to do
-		    # so, and doesn't handle GCC-style -W flags, so we
-		    # don't want to try using GCC-style -W flags.
-		    #
-		    ac_lbl_cc_dont_try_gcc_dashW=yes
-		    #
-		    # It also, apparently, defaults to "char" being
-		    # unsigned, unlike most other C implementations;
-		    # I suppose we could say "signed char" whenever
-		    # we want to guarantee a signed "char", but let's
-		    # just force signed chars.
-		    #
-		    # -xansi is normally the default, but the
-		    # configure script was setting it; perhaps -cckr
-		    # was the default in the Old Days.  (Then again,
-		    # that would probably be for backwards compatibility
-		    # in the days when ANSI C was Shiny and New, i.e.
-		    # 1989 and the early '90's, so maybe we can just
-		    # drop support for those compilers.)
-		    #
-		    # -g is equivalent to -g2, which turns off
-		    # optimization; we choose -g3, which generates
-		    # debugging information but doesn't turn off
-		    # optimization (even if the optimization would
-		    # cause inaccuracies in debugging).
-		    #
-		    $1="$$1 -xansi -signed -g3"
-		    ;;
-
-	    osf*)
-		    #
-		    # Presumed to be DEC OSF/1, Digital UNIX, or
-		    # Tru64 UNIX.
-		    #
-		    # The DEC C compiler, which is what we presume we're
-		    # using, doesn't exit with a non-zero exit status if we
-		    # hand it an invalid -W flag, can't be forced to do
-		    # so, and doesn't handle GCC-style -W flags, so we
-		    # don't want to try using GCC-style -W flags.
-		    #
-		    ac_lbl_cc_dont_try_gcc_dashW=yes
-		    #
-		    # -g is equivalent to -g2, which turns off
-		    # optimization; we choose -g3, which generates
-		    # debugging information but doesn't turn off
-		    # optimization (even if the optimization would
-		    # cause inaccuracies in debugging).
-		    #
-		    $1="$$1 -g3"
-		    ;;
-
 	    solaris*)
 		    #
 		    # Assumed to be Sun C, which requires -errwarn to force
@@ -209,22 +140,6 @@ AC_DEFUN(AC_LBL_C_INIT,
 		    # PCAP_API will be visible outside (shared) libraries.
 		    #
 		    AC_LBL_CHECK_COMPILER_OPT($1, -xldscope=hidden)
-		    ;;
-
-	    ultrix*)
-		    AC_MSG_CHECKING(that Ultrix $CC hacks const in prototypes)
-		    AC_CACHE_VAL(ac_cv_lbl_cc_const_proto,
-			AC_TRY_COMPILE(
-			    [#include <sys/types.h>],
-			    [struct a { int b; };
-			    void c(const struct a *)],
-			    ac_cv_lbl_cc_const_proto=yes,
-			    ac_cv_lbl_cc_const_proto=no))
-		    AC_MSG_RESULT($ac_cv_lbl_cc_const_proto)
-		    if test $ac_cv_lbl_cc_const_proto = no ; then
-			    AC_DEFINE(const,[],
-			        [to handle Ultrix compilers that don't support const in prototypes])
-		    fi
 		    ;;
 	    esac
 	    $1="$$1 -O"
@@ -296,7 +211,7 @@ AC_DEFUN(AC_LBL_CHECK_COMPILER_OPT,
 	#    https://www.postgresql.org/message-id/2192993.1591682589%40sss.pgh.pa.us
 	#
 	# This may, as per those two messages, be fixed in autoconf 2.70,
-	# but we only require 2.64 or newer for now.
+	# but we only require 2.69 or newer for now.
 	#
 	AC_COMPILE_IFELSE(
 	    [AC_LANG_SOURCE([[int main(void) { return 0; }]])],
@@ -381,9 +296,9 @@ AC_DEFUN(AC_LBL_CHECK_DEPENDENCY_GENERATION_OPT,
 		#
 		case "$host_os" in
 
-		irix*|osf*|darwin*)
+		darwin*)
 			#
-			# MIPS C for IRIX, DEC C, and clang all use -M.
+			# Clang uses -M.
 			#
 			ac_lbl_dependency_flag="-M"
 			;;
@@ -491,7 +406,7 @@ AC_DEFUN(AC_LBL_SHLIBS_INIT,
 	    aix*)
 		    ;;
 
-	    freebsd*|netbsd*|openbsd*|dragonfly*|linux*|osf*|haiku*|midipix*|gnu*)
+	    freebsd*|netbsd*|openbsd*|dragonfly*|linux*|haiku*|midipix*|gnu*)
 		    #
 		    # Platforms where the C compiler is GCC or accepts
 		    # compatible command-line arguments, and the linker
@@ -601,16 +516,6 @@ AC_DEFUN(AC_LBL_SHLIBS_INIT,
 		    #
 		    ;;
 
-	    osf*)
-		    #
-		    # Presumed to be DEC OSF/1, Digital UNIX, or
-		    # Tru64 UNIX.
-		    #
-		    V_SHLIB_CMD="\$(CC)"
-		    V_SHLIB_OPT="-shared"
-		    V_SONAME_OPT="-soname "
-		    ;;
-
 	    solaris*)
 		    V_SHLIB_CCOPT="$V_SHLIB_CCOPT -Kpic"
 		    V_SHLIB_CMD="\$(CC)"
@@ -628,60 +533,9 @@ AC_DEFUN(AC_LBL_SHLIBS_INIT,
 ])
 
 #
-# Try compiling a sample of the type of code that appears in
-# gencode.c with "inline", "__inline__", and "__inline".
-#
-# Autoconf's AC_C_INLINE, at least in autoconf 2.13, isn't good enough,
-# as it just tests whether a function returning "int" can be inlined;
-# at least some versions of HP's C compiler can inline that, but can't
-# inline a function that returns a struct pointer.
-#
-# Make sure we use the V_CCOPT flags, because some of those might
-# disable inlining.
-#
-AC_DEFUN(AC_LBL_C_INLINE,
-    [AC_MSG_CHECKING(for inline)
-    save_CFLAGS="$CFLAGS"
-    CFLAGS="$V_CCOPT"
-    AC_CACHE_VAL(ac_cv_lbl_inline, [
-	ac_cv_lbl_inline=""
-	ac_lbl_cc_inline=no
-	for ac_lbl_inline in inline __inline__ __inline
-	do
-	    AC_TRY_COMPILE(
-		[#define inline $ac_lbl_inline
-		static inline struct iltest *foo(void);
-		struct iltest {
-		    int iltest1;
-		    int iltest2;
-		};
-
-		static inline struct iltest *
-		foo()
-		{
-		    static struct iltest xxx;
-
-		    return &xxx;
-		}],,ac_lbl_cc_inline=yes,)
-	    if test "$ac_lbl_cc_inline" = yes ; then
-		break;
-	    fi
-	done
-	if test "$ac_lbl_cc_inline" = yes ; then
-	    ac_cv_lbl_inline=$ac_lbl_inline
-	fi])
-    CFLAGS="$save_CFLAGS"
-    if test ! -z "$ac_cv_lbl_inline" ; then
-	AC_MSG_RESULT($ac_cv_lbl_inline)
-    else
-	AC_MSG_RESULT(no)
-    fi
-    AC_DEFINE_UNQUOTED(inline, $ac_cv_lbl_inline, [Define as token for inline if inlining supported])])
-
-#
 # Test whether we have __atomic_load_n() and __atomic_store_n().
 #
-# We use AC_TRY_LINK because AC_TRY_COMPILE will succeed, as the
+# We use AC_LINK_IFELSE because AC_TRY_COMPILE will succeed, as the
 # compiler will just think that those functions are undefined,
 # and perhaps warn about that, but not fail to compile.
 #
@@ -689,14 +543,14 @@ AC_DEFUN(AC_PCAP_C___ATOMICS,
     [
 	AC_MSG_CHECKING(for __atomic_load_n)
 	AC_CACHE_VAL(ac_cv_have___atomic_load_n,
-	    AC_TRY_LINK([],
-		[
+	    AC_LINK_IFELSE([AC_LANG_PROGRAM([[]],
+		[[
 		    int i = 17;
 		    int j;
 		    j = __atomic_load_n(&i, __ATOMIC_RELAXED);
-		],
-		ac_have___atomic_load_n=yes,
-		ac_have___atomic_load_n=no))
+		]])],
+		[ac_have___atomic_load_n=yes],
+		[ac_have___atomic_load_n=no]))
 	AC_MSG_RESULT($ac_have___atomic_load_n)
 	if test $ac_have___atomic_load_n = yes ; then
 	    AC_DEFINE(HAVE___ATOMIC_LOAD_N, 1,
@@ -705,108 +559,18 @@ AC_DEFUN(AC_PCAP_C___ATOMICS,
 
 	AC_MSG_CHECKING(for __atomic_store_n)
 	AC_CACHE_VAL(ac_cv_have___atomic_store_n,
-	    AC_TRY_LINK([],
-		[
+	    AC_LINK_IFELSE([AC_LANG_PROGRAM([[]],
+		[[
 		    int i;
 		    __atomic_store_n(&i, 17, __ATOMIC_RELAXED);
-		],
-		ac_have___atomic_store_n=yes,
-		ac_have___atomic_store_n=no))
+		]])],
+		[ac_have___atomic_store_n=yes],
+		[ac_have___atomic_store_n=no]))
 	AC_MSG_RESULT($ac_have___atomic_store_n)
 	if test $ac_have___atomic_store_n = yes ; then
 	    AC_DEFINE(HAVE___ATOMIC_STORE_N, 1,
 		[define if __atomic_store_n is supported by the compiler])
 	fi])
-
-dnl
-dnl If using gcc, make sure we have ANSI ioctl definitions
-dnl
-dnl usage:
-dnl
-dnl	AC_LBL_FIXINCLUDES
-dnl
-AC_DEFUN(AC_LBL_FIXINCLUDES,
-    [if test "$GCC" = yes ; then
-	    AC_MSG_CHECKING(for ANSI ioctl definitions)
-	    AC_CACHE_VAL(ac_cv_lbl_gcc_fixincludes,
-		AC_TRY_COMPILE(
-		    [/*
-		     * This generates a "duplicate case value" when fixincludes
-		     * has not be run.
-		     */
-#		include <sys/types.h>
-#		include <sys/time.h>
-#		include <sys/ioctl.h>
-#		ifdef HAVE_SYS_IOCCOM_H
-#		include <sys/ioccom.h>
-#		endif],
-		    [switch (0) {
-		    case _IO('A', 1):;
-		    case _IO('B', 1):;
-		    }],
-		    ac_cv_lbl_gcc_fixincludes=yes,
-		    ac_cv_lbl_gcc_fixincludes=no))
-	    AC_MSG_RESULT($ac_cv_lbl_gcc_fixincludes)
-	    if test $ac_cv_lbl_gcc_fixincludes = no ; then
-		    # Don't cache failure
-		    unset ac_cv_lbl_gcc_fixincludes
-		    AC_MSG_ERROR(see the INSTALL for more info)
-	    fi
-    fi])
-
-dnl
-dnl Checks to see if union wait is used with WEXITSTATUS()
-dnl
-dnl usage:
-dnl
-dnl	AC_LBL_UNION_WAIT
-dnl
-dnl results:
-dnl
-dnl	DECLWAITSTATUS (defined)
-dnl
-AC_DEFUN(AC_LBL_UNION_WAIT,
-    [AC_MSG_CHECKING(if union wait is used)
-    AC_CACHE_VAL(ac_cv_lbl_union_wait,
-	AC_TRY_COMPILE([
-#	include <sys/types.h>
-#	include <sys/wait.h>],
-	    [int status;
-	    u_int i = WEXITSTATUS(status);
-	    u_int j = waitpid(0, &status, 0);],
-	    ac_cv_lbl_union_wait=no,
-	    ac_cv_lbl_union_wait=yes))
-    AC_MSG_RESULT($ac_cv_lbl_union_wait)
-    if test $ac_cv_lbl_union_wait = yes ; then
-	    AC_DEFINE(DECLWAITSTATUS,union wait,[type for wait])
-    else
-	    AC_DEFINE(DECLWAITSTATUS,int,[type for wait])
-    fi])
-
-dnl
-dnl Checks to see if -R is used
-dnl
-dnl usage:
-dnl
-dnl	AC_LBL_HAVE_RUN_PATH
-dnl
-dnl results:
-dnl
-dnl	ac_cv_lbl_have_run_path (yes or no)
-dnl
-AC_DEFUN(AC_LBL_HAVE_RUN_PATH,
-    [AC_MSG_CHECKING(for ${CC-cc} -R)
-    AC_CACHE_VAL(ac_cv_lbl_have_run_path,
-	[echo 'main(){}' > conftest.c
-	${CC-cc} -o conftest conftest.c -R/a1/b2/c3 >conftest.out 2>&1
-	if test ! -s conftest.out ; then
-		ac_cv_lbl_have_run_path=yes
-	else
-		ac_cv_lbl_have_run_path=no
-	fi
-	rm -f -r conftest*])
-    AC_MSG_RESULT($ac_cv_lbl_have_run_path)
-    ])
 
 dnl
 dnl If the file .devel exists:
@@ -825,6 +589,11 @@ dnl	os-proto.h (symlinked)
 dnl
 AC_DEFUN(AC_LBL_DEVEL,
     [rm -f os-proto.h
+    #
+    # MKDEP defaults to no-op (":") if we don't test whether the compiler
+    # supports generating dependencies
+    #
+    MKDEP=:
     if test "${LBL_CFLAGS+set}" = set; then
 	    $1="$$1 ${LBL_CFLAGS}"
     fi
@@ -836,21 +605,22 @@ AC_DEFUN(AC_LBL_DEVEL,
 		    AC_LBL_CHECK_COMPILER_OPT($1, -W)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wall)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wcomma)
+		    # Warns about safeguards added in case the enums are
+		    # extended
+		    # AC_LBL_CHECK_COMPILER_OPT($1, -Wcovered-switch-default)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wdocumentation)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wformat-nonliteral)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wmissing-noreturn)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wmissing-prototypes)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wmissing-variable-declarations)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wnull-pointer-subtraction)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wpointer-arith)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wpointer-sign)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wshadow)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wshorten-64-to-32)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wsign-compare)
 		    AC_LBL_CHECK_COMPILER_OPT($1, -Wstrict-prototypes)
-		    AC_LBL_CHECK_COMPILER_OPT($1, -Wunused-parameter)
-		    AC_LBL_CHECK_COMPILER_OPT($1, -Wused-but-marked-unused)
-		    # Warns about safeguards added in case the enums are
-		    # extended
-		    # AC_LBL_CHECK_COMPILER_OPT($1, -Wcovered-switch-default)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wundef)
 		    #
 		    # This can cause problems with ntohs(), ntohl(),
 		    # htons(), and htonl() on some platforms, such
@@ -863,7 +633,7 @@ AC_DEFUN(AC_LBL_DEVEL,
 		    # on whether it is, does a compile-time swap or
 		    # a run-time swap; perhaps the compiler always
 		    # considers one of the two results of the
-		    # conditional expressin is never evaluated,
+		    # conditional expression is never evaluated,
 		    # because the conditional check is done at
 		    # compile time, and thus always says "that
 		    # expression is never executed".
@@ -886,124 +656,72 @@ testme(unsigned short a)
 }
 		      ],
 		      [generates warnings from ntohs()])
-		    AC_LBL_CHECK_COMPILER_OPT($1, -Wshorten-64-to-32)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wunused-but-set-parameter)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wunused-but-set-variable)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wunused-parameter)
+		    AC_LBL_CHECK_COMPILER_OPT($1, -Wused-but-marked-unused)
 	    fi
 	    AC_LBL_CHECK_DEPENDENCY_GENERATION_OPT()
-	    #
-	    # We used to set -n32 for IRIX 6 when not using GCC (presumed
-	    # to mean that we're using MIPS C or MIPSpro C); it specified
-	    # the "new" faster 32-bit ABI, introduced in IRIX 6.2.  I'm
-	    # not sure why that would be something to do *only* with a
-	    # .devel file; why should the ABI for which we produce code
-	    # depend on .devel?
-	    #
+	    AC_MSG_CHECKING([whether to use an os-proto.h header])
 	    os=`echo $host_os | sed -e 's/\([[0-9]][[0-9]]*\)[[^0-9]].*$/\1/'`
 	    name="lbl/os-$os.h"
 	    if test -f $name ; then
+		    AC_MSG_RESULT([yes, at "$name"])
 		    ln -s $name os-proto.h
 		    AC_DEFINE(HAVE_OS_PROTO_H, 1,
-			[if there's an os_proto.h for this platform, to use additional prototypes])
+			[if there's an os-proto.h for this platform, to use additional prototypes])
 	    else
-		    AC_MSG_WARN(can't find $name)
+		    AC_MSG_RESULT([no])
 	    fi
     fi])
 
 dnl
-dnl Improved version of AC_CHECK_LIB
-dnl
-dnl Thanks to John Hawkinson (jhawk@mit.edu)
-dnl
-dnl usage:
-dnl
-dnl	AC_LBL_CHECK_LIB(LIBRARY, FUNCTION [, ACTION-IF-FOUND [,
-dnl	    ACTION-IF-NOT-FOUND [, OTHER-LIBRARIES]]])
-dnl
-dnl results:
-dnl
-dnl	LIBS
-dnl
-dnl XXX - "AC_LBL_LIBRARY_NET" was redone to use "AC_SEARCH_LIBS"
-dnl rather than "AC_LBL_CHECK_LIB", so this isn't used any more.
-dnl We keep it around for reference purposes in case it's ever
-dnl useful in the future.
-dnl
-
-define(AC_LBL_CHECK_LIB,
-[AC_MSG_CHECKING([for $2 in -l$1])
-dnl Use a cache variable name containing the library, function
-dnl name, and extra libraries to link with, because the test really is
-dnl for library $1 defining function $2, when linked with potinal
-dnl library $5, not just for library $1.  Separate tests with the same
-dnl $1 and different $2's or $5's may have different results.
-ac_lib_var=`echo $1['_']$2['_']$5 | sed 'y%./+- %__p__%'`
-AC_CACHE_VAL(ac_cv_lbl_lib_$ac_lib_var,
-[ac_save_LIBS="$LIBS"
-LIBS="-l$1 $5 $LIBS"
-AC_TRY_LINK(dnl
-ifelse([$2], [main], , dnl Avoid conflicting decl of main.
-[/* Override any gcc2 internal prototype to avoid an error.  */
-]ifelse(AC_LANG, CPLUSPLUS, [#ifdef __cplusplus
-extern "C"
-#endif
-])dnl
-[/* We use char because int might match the return type of a gcc2
-    builtin and then its argument prototype would still apply.  */
-char $2();
-]),
-	    [$2()],
-	    eval "ac_cv_lbl_lib_$ac_lib_var=yes",
-	    eval "ac_cv_lbl_lib_$ac_lib_var=no")
-LIBS="$ac_save_LIBS"
-])dnl
-if eval "test \"`echo '$ac_cv_lbl_lib_'$ac_lib_var`\" = yes"; then
-  AC_MSG_RESULT(yes)
-  ifelse([$3], ,
-[changequote(, )dnl
-  ac_tr_lib=HAVE_LIB`echo $1 | sed -e 's/[^a-zA-Z0-9_]/_/g' \
-    -e 'y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/'`
-changequote([, ])dnl
-  AC_DEFINE_UNQUOTED($ac_tr_lib)
-  LIBS="-l$1 $LIBS"
-], [$3])
-else
-  AC_MSG_RESULT(no)
-ifelse([$4], , , [$4
-])dnl
-fi
-])
-
-dnl
 dnl AC_LBL_LIBRARY_NET
 dnl
-dnl This test is for network applications that need socket functions and
-dnl getaddrinfo()/getnameinfo()-ish functions.  We now require
-dnl getaddrinfo() and getnameinfo().  We also prefer versions of
-dnl recvmsg() that conform to the Single UNIX Specification, so that we
-dnl can check whether a datagram received with recvmsg() was truncated
-dnl when received due to the buffer being too small.
+dnl Look for various networking-related libraries that we may need.
 dnl
-dnl On most operating systems, they're available in the system library.
+dnl We need getaddrinfo() to translate host names in filters to IP
+dnl addresses. We use getaddrinfo() because we want a portable
+dnl thread-safe way of getting information for a host name or port;
+dnl there exist _r versions of gethostbyname() and getservbyname() on
+dnl some platforms, but not on all platforms.
 dnl
-dnl Under Solaris, we need to link with libsocket and libnsl to get
-dnl getaddrinfo() and getnameinfo() and, if we have libxnet, we need to
-dnl link with libxnet before libsocket to get a version of recvmsg()
-dnl that conforms to the Single UNIX Specification.
+dnl We may also need socket() and other socket functions to support:
 dnl
-dnl We use getaddrinfo() because we want a portable thread-safe way
-dnl of getting information for a host name or port; there exist _r
-dnl versions of gethostbyname() and getservbyname() on some platforms,
-dnl but not on all platforms.
+dnl   Local packet capture with capture mechanisms that use sockets.
+dnl
+dnl   Local capture device enumeration if a socket call is needed to
+dnl   enumerate devices or get device attributes.
+dnl
+dnl   Packet capture from services that put captured packets on the
+dnl   network, such as rpcap servers.
+dnl
+dnl We may also need getnameinfo() for packet capture from services
+dnl that put packets on the network.
 dnl
 AC_DEFUN(AC_LBL_LIBRARY_NET, [
     #
-    # Most operating systems have getaddrinfo() in the default searched
-    # libraries (i.e. libc).  Check there first.
+    # Most operating systems have getaddrinfo(), and the other routines
+    # we may need, in the default searched libraries (e.g., libc).
+    #
+    # These are: AIX, FreeBSD, Linux, macOS, NetBSD, OpenBSD, Solaris
+    # since 11.4.
+    #
+    # Check there first.
     #
     AC_CHECK_FUNC(getaddrinfo,,
     [
 	#
 	# Not found in the standard system libraries.
-	# Try libsocket, which requires libnsl.
+	#
+	# In some versions of Solaris, we need to link with libsocket
+	# and libnsl, so check in libsocket and also link with libnsl
+	# when doing this test.
+	#
+	# These are: illumos, Solaris 9.x, 10.x, 11.x before 11.4.
+	#
+	# Linking with libsocket and libnsl will find all the routines
+	# we need.
 	#
 	AC_CHECK_LIB(socket, getaddrinfo,
 	[
@@ -1017,6 +735,9 @@ AC_DEFUN(AC_LBL_LIBRARY_NET, [
 	    # Not found in libsocket; test for it in libnetwork, which
 	    # is where it is in Haiku.
 	    #
+	    # Linking with libnetwork will find all the routines we
+	    # need.
+	    #
 	    AC_CHECK_LIB(network, getaddrinfo,
 	    [
 		#
@@ -1026,26 +747,54 @@ AC_DEFUN(AC_LBL_LIBRARY_NET, [
 	    ],
 	    [
 		#
-		# We didn't find it.
+		# If this is QNX 8.0, getaddrinfo() and related functions are
+		# in libsocket, but there is no libnsl, hence the check result
+		# above for getaddrinfo() in libsocket with libnsl is negative.
+		# Autoconf caches the result, but does take libnsl into account
+		# as a caching factor, so remove the cached result to prevent
+		# an erroneous "cache hit" in the check below.
 		#
-		AC_MSG_ERROR([getaddrinfo is required, but wasn't found])
+		AS_UNSET(ac_cv_lib_socket_getaddrinfo)
+		AC_CHECK_LIB(socket, getaddrinfo,
+		[
+		    LIBS="-lsocket $LIBS"
+		],
+		[
+		    #
+		    # We didn't find it.
+		    #
+		    AC_MSG_ERROR([getaddrinfo is required, but wasn't found])
+		])
 	    ])
 	], -lnsl)
 
 	#
-	# OK, do we have recvmsg() in libxnet?
-	# We also link with libsocket and libnsl.
+	# We require a version of recvmsg() that conforms to the Single
+	# UNIX Specification, so that we can check whether a datagram
+	# received with recvmsg() was truncated when received due to the
+	# buffer being too small.
+	#
+	# On most systems, the version of recvmsg() in the libraries
+	# found above conforms to the SUS.
+	#
+	# On at least some versions of Solaris, it does not conform to
+	# the SUS, and we need the version in libxnet, which does
+	# conform.
+	#
+	# Check whether libxnet exists and has a version of recvmsg();
+	# if it does, link with libxnet before we link with libsocket,
+	# to get that version.
+	#
+	# This test also links with libsocket and libnsl.
 	#
 	AC_CHECK_LIB(xnet, recvmsg,
 	[
 	    #
-	    # Yes - link with it as well.
+	    # libxnet has recvmsg(); link with it as well.
 	    #
 	    LIBS="-lxnet $LIBS"
 	], , -lsocket -lnsl)
     ])
-    # DLPI needs putmsg under HPUX so test for -lstr while we're at it
-    AC_SEARCH_LIBS(putmsg, str)
 ])
 
 m4_ifndef([AC_CONFIG_MACRO_DIRS], [m4_defun([_AM_CONFIG_MACRO_DIRS], [])m4_defun([AC_CONFIG_MACRO_DIRS], [_AM_CONFIG_MACRO_DIRS($@)])])
@@ -1103,9 +852,8 @@ dnl Since: 0.16
 dnl
 dnl Search for the pkg-config tool and set the PKG_CONFIG variable to
 dnl first found in the path. Checks that the version of pkg-config found
-dnl is at least MIN-VERSION. If MIN-VERSION is not specified, 0.9.0 is
-dnl used since that's the first version where most current features of
-dnl pkg-config existed.
+dnl is at least MIN-VERSION. If MIN-VERSION is not specified, 0.17.0 is
+dnl used since that's the first version where --static was supported.
 AC_DEFUN([PKG_PROG_PKG_CONFIG],
 [m4_pattern_forbid([^_?PKG_[A-Z_]+$])
 m4_pattern_allow([^PKG_CONFIG(_(PATH|LIBDIR|SYSROOT_DIR|ALLOW_SYSTEM_(CFLAGS|LIBS)))?$])
@@ -1118,7 +866,7 @@ if test "x$ac_cv_env_PKG_CONFIG_set" != "xset"; then
 	AC_PATH_TOOL([PKG_CONFIG], [pkg-config])
 fi
 if test -n "$PKG_CONFIG"; then
-	_pkg_min_version=m4_default([$1], [0.9.0])
+	_pkg_min_version=m4_default([$1], [0.17.0])
 	AC_MSG_CHECKING([pkg-config is at least version $_pkg_min_version])
 	if $PKG_CONFIG --atleast-pkgconfig-version $_pkg_min_version; then
 		AC_MSG_RESULT([yes])
@@ -1129,12 +877,12 @@ if test -n "$PKG_CONFIG"; then
 fi[]dnl
 ])dnl PKG_PROG_PKG_CONFIG
 
-dnl PKG_CHECK_EXISTS(MODULES, [ACTION-IF-FOUND], [ACTION-IF-NOT-FOUND])
+dnl PKG_CHECK_EXISTS(MODULE, [ACTION-IF-FOUND], [ACTION-IF-NOT-FOUND])
 dnl -------------------------------------------------------------------
 dnl Since: 0.18
 dnl
-dnl Check to see whether a particular set of modules exists. Similar to
-dnl PKG_CHECK_MODULES(), but does not set variables or print errors.
+dnl Check to see whether a particular module exists. Similar to
+dnl PKG_CHECK_MODULE(), but does not set variables or print errors.
 AC_DEFUN([PKG_CHECK_EXISTS],
 [
 if test -n "$PKG_CONFIG" && \
@@ -1144,7 +892,34 @@ m4_ifvaln([$3], [else
   $3])dnl
 fi])
 
-dnl _PKG_CONFIG([VARIABLE], [FLAGS], [MODULES])
+dnl _PKG_CONFIG_WITH_FLAGS([VARIABLE], [FLAGS], [MODULE])
+dnl ---------------------------------------------
+dnl Internal wrapper calling pkg-config via PKG_CONFIG and, if
+dnl pkg-config fails, reporting the error and quitting.
+m4_define([_PKG_CONFIG_WITH_FLAGS],
+[if test ! -n "$$1"; then
+    $1=`$PKG_CONFIG $2 "$3" 2>/dev/null`
+    if test "x$?" != "x0"; then
+        #
+        # That failed - report an error.
+        # Re-run the command, telling pkg-config to print an error
+        # message, capture the error message, and report it.
+        # This causes the configuration script to fail, as it means
+        # the script is almost certainly doing something wrong.
+        #
+        _PKG_SHORT_ERRORS_SUPPORTED
+	if test $_pkg_short_errors_supported = yes; then
+	    _pkg_error_string=`$PKG_CONFIG --short-errors --print-errors $2 "$3" 2>&1`
+	else
+	    _pkg_error_string=`$PKG_CONFIG --print-errors $2 "$3" 2>&1`
+	fi
+        AC_MSG_ERROR([$PKG_CONFIG $2 "$3" failed: $_pkg_error_string])
+    fi
+ fi[]dnl
+])dnl _PKG_CONFIG_WITH_FLAGS
+
+
+dnl _PKG_CONFIG([VARIABLE], [FLAGS], [MODULE])
 dnl ---------------------------------------------
 dnl Internal wrapper calling pkg-config via PKG_CONFIG and setting
 dnl pkg_failed based on the result.
@@ -1174,97 +949,55 @@ fi[]dnl
 ])dnl _PKG_SHORT_ERRORS_SUPPORTED
 
 
-dnl PKG_CHECK_MODULES(VARIABLE-PREFIX, MODULES, [ACTION-IF-FOUND],
+dnl PKG_CHECK_MODULE(VARIABLE-PREFIX, MODULE, [ACTION-IF-FOUND],
 dnl   [ACTION-IF-NOT-FOUND])
 dnl --------------------------------------------------------------
 dnl Since: 0.4.0
-AC_DEFUN([PKG_CHECK_MODULES],
+AC_DEFUN([PKG_CHECK_MODULE],
 [
-AC_ARG_VAR([$1][_CFLAGS], [C compiler flags for $2, overriding pkg-config])dnl
-AC_ARG_VAR([$1][_LIBS], [linker flags for $2, overriding pkg-config])dnl
-AC_ARG_VAR([$1][_LIBS_STATIC], [static-link linker flags for $2, overriding pkg-config])dnl
-
-pkg_failed=no
 AC_MSG_CHECKING([for $2 with pkg-config])
-PKG_CHECK_EXISTS($2,
-    [
+if test -n "$PKG_CONFIG"; then
+    AC_ARG_VAR([$1][_CFLAGS], [C compiler flags for $2, overriding pkg-config])dnl
+    AC_ARG_VAR([$1][_LIBS], [linker flags for $2, overriding pkg-config])dnl
+    AC_ARG_VAR([$1][_LIBS_STATIC], [static-link linker flags for $2, overriding pkg-config])dnl
+
+    if AC_RUN_LOG([$PKG_CONFIG --exists --print-errors "$2"]); then
 	#
 	# The package was found, so try to get its C flags and
 	# libraries.
 	#
-	_PKG_CONFIG([$1][_CFLAGS], [--cflags], [$2])
-	_PKG_CONFIG([$1][_LIBS], [--libs], [$2])
-	_PKG_CONFIG([$1][_LIBS_STATIC], [--libs --static], [$2])
-
-	m4_define([_PKG_TEXT], [
-Alternatively, you may set the environment variables $1[]_CFLAGS
-and $1[]_LIBS to avoid the need to call pkg-config.
-See the pkg-config man page for more details.])
-
-	if test $pkg_failed = yes; then
-		#
-		# That failed - report an error.
-		#
-	   	AC_MSG_RESULT([error])
-        	_PKG_SHORT_ERRORS_SUPPORTED
-	        if test $_pkg_short_errors_supported = yes; then
-		        $1[]_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "$2" 2>&1`
-	        else
-		        $1[]_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "$2" 2>&1`
-	        fi
-		# Put the nasty error message in config.log where it belongs
-		echo "$$1[]_PKG_ERRORS" >&AS_MESSAGE_LOG_FD
-
-		m4_default([$4], [AC_MSG_ERROR(
-[Package requirements ($2) were not met:
-
-$$1_PKG_ERRORS
-
-Consider adjusting the PKG_CONFIG_PATH environment variable if you
-installed software in a non-standard prefix.
-
-_PKG_TEXT])[]dnl
-        ])
-	elif test $pkg_failed = untried; then
-		#
-		# We don't have pkg-config, so it didn't work.
-		#
-	     	AC_MSG_RESULT([not found (pkg-config not found)])
-	else
-		#
-		# We found the package.
-		#
-		$1[]_CFLAGS=$pkg_cv_[]$1[]_CFLAGS
-		$1[]_LIBS=$pkg_cv_[]$1[]_LIBS
-		$1[]_LIBS_STATIC=$pkg_cv_[]$1[]_LIBS_STATIC
-	        AC_MSG_RESULT([found])
-		$3
-	fi[]dnl
-    ],
-    [
-	#
-	# The package isn't present.
-	#
-	AC_MSG_RESULT([not found])
-    ])
-])dnl PKG_CHECK_MODULES
+        AC_MSG_RESULT([found])
+	_PKG_CONFIG_WITH_FLAGS([$1][_CFLAGS], [--cflags], [$2])
+	_PKG_CONFIG_WITH_FLAGS([$1][_LIBS], [--libs], [$2])
+	_PKG_CONFIG_WITH_FLAGS([$1][_LIBS_STATIC], [--libs --static], [$2])
+        m4_default([$3], [:])
+    else
+        AC_MSG_RESULT([not found])
+        m4_default([$4], [:])
+    fi
+else
+    # No pkg-config, so obviously not found with pkg-config.
+    AC_MSG_RESULT([pkg-config not found])
+    m4_default([$4], [:])
+fi
+])dnl PKG_CHECK_MODULE
 
 
-dnl PKG_CHECK_MODULES_STATIC(VARIABLE-PREFIX, MODULES, [ACTION-IF-FOUND],
+dnl PKG_CHECK_MODULE_STATIC(VARIABLE-PREFIX, MODULE, [ACTION-IF-FOUND],
 dnl   [ACTION-IF-NOT-FOUND])
 dnl ---------------------------------------------------------------------
 dnl Since: 0.29
 dnl
-dnl Checks for existence of MODULES and gathers its build flags with
+dnl Checks for existence of MODULE and gathers its build flags with
 dnl static libraries enabled. Sets VARIABLE-PREFIX_CFLAGS from --cflags
 dnl and VARIABLE-PREFIX_LIBS from --libs.
-AC_DEFUN([PKG_CHECK_MODULES_STATIC],
+AC_DEFUN([PKG_CHECK_MODULE_STATIC],
 [
 _save_PKG_CONFIG=$PKG_CONFIG
 PKG_CONFIG="$PKG_CONFIG --static"
-PKG_CHECK_MODULES($@)
+PKG_CHECK_MODULE($@)
 PKG_CONFIG=$_save_PKG_CONFIG[]dnl
-])dnl PKG_CHECK_MODULES_STATIC
+])dnl PKG_CHECK_MODULE_STATIC
 
 
 dnl PKG_INSTALLDIR([DIRECTORY])

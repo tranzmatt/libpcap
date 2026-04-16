@@ -32,20 +32,12 @@
  * SUCH DAMAGE.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
-#ifdef HAVE_SYS_SOCKIO_H
-#include <sys/sockio.h>
-#endif
-#include <sys/time.h>				/* concession to AIX */
 
-struct mbuf;		/* Squelch compiler warnings on some platforms for */
-struct rtentry;		/* declarations in <net/if.h> */
 #include <net/if.h>
 #include <netinet/in.h>
 
@@ -87,6 +79,10 @@ struct rtentry;		/* declarations in <net/if.h> */
  * We assume that a UNIX that doesn't have "getifaddrs()" and doesn't have
  * SIOCGLIFCONF, but has SIOCGIFCONF, uses "struct sockaddr" for the
  * address in an entry returned by SIOCGIFCONF.
+ *
+ * OSes that use this file are:
+ * - AIX 7 (SA_LEN() is not defined, HAVE_STRUCT_SOCKADDR_SA_LEN is defined)
+ * - HP-UX 11 (HAVE_STRUCT_SOCKADDR_SA_LEN is not defined)
  */
 #ifndef SA_LEN
 #ifdef HAVE_STRUCT_SOCKADDR_SA_LEN
@@ -132,11 +128,11 @@ struct rtentry;		/* declarations in <net/if.h> */
  * we already have that.
  */
 int
-pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
+pcapint_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
     int (*check_usable)(const char *), get_if_flags_func get_flags_func)
 {
-	register int fd;
-	register struct ifreq *ifrp, *ifend, *ifnext;
+	int fd;
+	struct ifreq *ifrp, *ifend, *ifnext;
 	size_t n;
 	struct ifconf ifc;
 	char *buf = NULL;
@@ -154,7 +150,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 	 */
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (fd < 0) {
-		pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "socket");
 		return (-1);
 	}
@@ -178,20 +174,19 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 			(void)close(fd);
 			return (-1);
 		}
-		buf = malloc(buf_size);
+		buf = calloc(1, buf_size);
 		if (buf == NULL) {
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
-			    errno, "malloc");
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			    errno, "calloc");
 			(void)close(fd);
 			return (-1);
 		}
 
 		ifc.ifc_len = buf_size;
 		ifc.ifc_buf = buf;
-		memset(buf, 0, buf_size);
 		if (ioctl(fd, SIOCGIFCONF, (char *)&ifc) < 0
 		    && errno != EINVAL) {
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "SIOCGIFCONF");
 			(void)close(fd);
 			free(buf);
@@ -239,14 +234,6 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 			break;
 
 		/*
-		 * Skip entries that begin with "dummy".
-		 * XXX - what are these?  Is this Linux-specific?
-		 * Are there platforms on which we shouldn't do this?
-		 */
-		if (strncmp(ifrp->ifr_name, "dummy", 5) == 0)
-			continue;
-
-		/*
 		 * Can we capture on this device?
 		 */
 		if (!(*check_usable)(ifrp->ifr_name)) {
@@ -259,12 +246,12 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 		/*
 		 * Get the flags for this interface.
 		 */
-		strncpy(ifrflags.ifr_name, ifrp->ifr_name,
+		pcapint_strlcpy(ifrflags.ifr_name, ifrp->ifr_name,
 		    sizeof(ifrflags.ifr_name));
 		if (ioctl(fd, SIOCGIFFLAGS, (char *)&ifrflags) < 0) {
 			if (errno == ENXIO)
 				continue;
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "SIOCGIFFLAGS: %.*s",
 			    (int)sizeof(ifrflags.ifr_name),
 			    ifrflags.ifr_name);
@@ -275,7 +262,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 		/*
 		 * Get the netmask for this address on this interface.
 		 */
-		strncpy(ifrnetmask.ifr_name, ifrp->ifr_name,
+		pcapint_strlcpy(ifrnetmask.ifr_name, ifrp->ifr_name,
 		    sizeof(ifrnetmask.ifr_name));
 		memcpy(&ifrnetmask.ifr_addr, &ifrp->ifr_addr,
 		    sizeof(ifrnetmask.ifr_addr));
@@ -287,7 +274,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 				netmask = NULL;
 				netmask_size = 0;
 			} else {
-				pcap_fmt_errmsg_for_errno(errbuf,
+				pcapint_fmt_errmsg_for_errno(errbuf,
 				    PCAP_ERRBUF_SIZE, errno,
 				    "SIOCGIFNETMASK: %.*s",
 				    (int)sizeof(ifrnetmask.ifr_name),
@@ -305,7 +292,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 		 * interface (if any).
 		 */
 		if (ifrflags.ifr_flags & IFF_BROADCAST) {
-			strncpy(ifrbroadaddr.ifr_name, ifrp->ifr_name,
+			pcapint_strlcpy(ifrbroadaddr.ifr_name, ifrp->ifr_name,
 			    sizeof(ifrbroadaddr.ifr_name));
 			memcpy(&ifrbroadaddr.ifr_addr, &ifrp->ifr_addr,
 			    sizeof(ifrbroadaddr.ifr_addr));
@@ -318,7 +305,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 					broadaddr = NULL;
 					broadaddr_size = 0;
 				} else {
-					pcap_fmt_errmsg_for_errno(errbuf,
+					pcapint_fmt_errmsg_for_errno(errbuf,
 					    PCAP_ERRBUF_SIZE, errno,
 					    "SIOCGIFBRDADDR: %.*s",
 					    (int)sizeof(ifrbroadaddr.ifr_name),
@@ -344,7 +331,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 		 * interface (if any).
 		 */
 		if (ifrflags.ifr_flags & IFF_POINTOPOINT) {
-			strncpy(ifrdstaddr.ifr_name, ifrp->ifr_name,
+			pcapint_strlcpy(ifrdstaddr.ifr_name, ifrp->ifr_name,
 			    sizeof(ifrdstaddr.ifr_name));
 			memcpy(&ifrdstaddr.ifr_addr, &ifrp->ifr_addr,
 			    sizeof(ifrdstaddr.ifr_addr));
@@ -357,7 +344,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 					dstaddr = NULL;
 					dstaddr_size = 0;
 				} else {
-					pcap_fmt_errmsg_for_errno(errbuf,
+					pcapint_fmt_errmsg_for_errno(errbuf,
 					    PCAP_ERRBUF_SIZE, errno,
 					    "SIOCGIFDSTADDR: %.*s",
 					    (int)sizeof(ifrdstaddr.ifr_name),
@@ -409,7 +396,7 @@ pcap_findalldevs_interfaces(pcap_if_list_t *devlistp, char *errbuf,
 		/*
 		 * Add information for this address to the list.
 		 */
-		if (add_addr_to_if(devlistp, ifrp->ifr_name,
+		if (pcapint_add_addr_to_if(devlistp, ifrp->ifr_name,
 		    ifrflags.ifr_flags, get_flags_func,
 		    &ifrp->ifr_addr, SA_LEN(&ifrp->ifr_addr),
 		    netmask, netmask_size, broadaddr, broadaddr_size,

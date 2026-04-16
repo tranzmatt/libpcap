@@ -1,5 +1,5 @@
 #  Copyright (c) 1993, 1994, 1995, 1996
-# 	The Regents of the University of California.  All rights reserved.
+#	The Regents of the University of California.  All rights reserved.
 #
 #  Redistribution and use in source and binary forms, with or without
 #  modification, are permitted provided that: (1) source code distributions
@@ -73,19 +73,15 @@ INSTALL = @INSTALL@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_DATA = @INSTALL_DATA@
 
-# Explicitly define compilation rule since SunOS 4's make doesn't like gcc.
-# Also, gcc does not remove the .o before forking 'as', which can be a
-# problem if you don't own the file but can write to the directory.
 .c.o:
-	@rm -f $@
-	$(CC) $(FULL_CFLAGS) -c $(srcdir)/$*.c
+	$(CC) $(FULL_CFLAGS) -c -o $@ $<
 
 SRC =	daemon.c \
 	fileconf.c \
 	log.c \
 	rpcapd.c
 
-OBJ =	$(SRC:.c=.o) ../rpcap-protocol.o ../sockutils.o ../fmtutils.o ../sslutils.o
+OBJ =	$(SRC:.c=.o)
 PUBHDR =
 
 HDR = $(PUBHDR) log.h
@@ -139,4 +135,4 @@ tags: $(TAGFILES)
 	ctags -wtd $(TAGFILES)
 
 depend:
-	$(MKDEP) -c "$(CC)" -m "$(DEPENDENCY_CFLAG)" -s "$(srcdir)" $(CFLAGS) $(DEFS) $(INCLS) $(SRC)
+	$(MKDEP) -c $(CC) -m "$(DEPENDENCY_CFLAG)" -s "$(srcdir)" $(CFLAGS) $(DEFS) $(INCLS) $(SRC)

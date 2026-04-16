@@ -17,7 +17,7 @@
 .\" WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
 .\" MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 .\"
-.TH PCAP 3PCAP "9 September 2020"
+.TH PCAP 3PCAP "18 September 2024"
 .SH NAME
 pcap \- Packet Capture library
 .SH SYNOPSIS
@@ -72,15 +72,7 @@ makes an attempt to check whether the string passed as an argument is a
 UTF-16LE string - note that this attempt is unsafe, as it may run past
 the end of the string - to handle
 .BR pcap_lookupdev ()
-returning a UTF-16LE string. Programs that don't call
-.BR pcap_init ()
-should, on Windows, call
-.BR pcap_wsockinit ()
-to initialize Winsock; this is not necessary if
-.BR pcap_init ()
-is called, as
-.BR pcap_init ()
-will initialize Winsock itself on Windows.
+returning a UTF-16LE string.
 .TP
 .B Routines
 .RS
@@ -281,12 +273,6 @@ The time stamp type is set with
 Reading packets from a network interface may require that you have
 special privileges:
 .TP
-.B Under SunOS 3.x or 4.x with NIT or BPF:
-You must have read access to
-.I /dev/nit
-or
-.IR /dev/bpf* .
-.TP
 .B Under Solaris with DLPI:
 You must have read/write access to the network pseudo device, e.g.
 .IR /dev/le .
@@ -315,33 +301,17 @@ command.
 You must be root or the application capturing packets must be installed
 setuid to root.
 .TP
-.B Under IRIX with snoop:
-You must be root or the application capturing packets must be installed
-setuid to root.
-.TP
 .B Under Linux:
 You must be root or the application capturing packets must be installed
 setuid to root, unless your distribution has a kernel
-that supports capability bits such as CAP_NET_RAW and code to allow
+that supports capability bits such as
+.B CAP_NET_RAW
+and code to allow
 those capability bits to be given to particular accounts and to cause
 those bits to be set on a user's initial processes when they log in, in
-which case you must have CAP_NET_RAW in order to capture.
-.TP
-.B Under ULTRIX and Digital UNIX/Tru64 UNIX:
-Any user may capture network traffic.
-However, no user (not even the super-user) can capture in promiscuous
-mode on an interface unless the super-user has enabled promiscuous-mode
-operation on that interface using
-.IR pfconfig (8),
-and no user (not even the super-user) can capture unicast traffic
-received by or sent by the machine on an interface unless the super-user
-has enabled copy-all-mode operation on that interface using
-.IR pfconfig ,
-so
-.I useful
-packet capture on an interface probably requires that either
-promiscuous-mode or copy-all-mode operation, or both modes of
-operation, be enabled on that interface.
+which case you must have
+.B CAP_NET_RAW
+in order to capture.
 .TP
 .B Under BSD (this includes macOS):
 You must have read access to
@@ -598,53 +568,61 @@ The callback for
 and
 .BR pcap_loop ()
 is supplied a pointer to a
-.IR "struct pcap_pkthdr" ,
+.BR "struct pcap_pkthdr" ,
 which includes the following members:
 .RS
 .TP
 .B ts
 a
-.I struct timeval
+.B struct timeval
 containing the time when the packet was captured
 .TP
 .B caplen
 a
-.I bpf_u_int32
+.B bpf_u_int32
 giving the number of bytes of the packet that are available from the
 capture
 .TP
 .B len
 a
-.I bpf_u_int32
+.B bpf_u_int32
 giving the length of the packet, in bytes (which might be more than the
 number of bytes available from the capture, if the length of the packet
-is larger than the maximum number of bytes to capture).
+was larger than the snapshot length or than some limit imposed by the
+capture mechanism).
 .RE
 .PP
 The callback is also supplied a
-.I const u_char
+.B const u_char
 pointer to the first
 .B caplen
 (as given in the
-.I struct pcap_pkthdr
+.B struct pcap_pkthdr
 mentioned above)
 bytes of data from the packet.  This won't necessarily be the entire
-packet; to capture the entire packet, you will have to provide a value
-for
-.I snaplen
-in your call to
+packet; the default value used if
+.BR pcap_create ()
+and
+.BR pcap_activate ()
+are used to open a capture device, and no call to
 .BR pcap_set_snaplen ()
-that is sufficiently large to get all of the packet's data - a value of
-65535 should be sufficient on most if not all networks).  When reading
-from a ``savefile'', the snapshot length specified when the capture was
-performed will limit the amount of packet data available.
+is made before
+.BR pcap_activate ()
+is called, should be sufficient for that device.  However, if a smaller
+value is set with a call to
+.BR pcap_set_snaplen (),
+if the default isn't sufficient for that device, or if the mechanism
+used by libpcap to capture the traffic imposes a separate limit,
+some captured packets may not contain all the data sent or received.
+When reading from a ``savefile'', the snapshot length specified when the
+capture was performed will limit the amount of packet data available.
 .PP
 .BR pcap_next ()
 is passed an argument that points to a
-.I struct pcap_pkthdr
+.B struct pcap_pkthdr
 structure, and fills it in with the time stamp and length values for the
 packet.  It returns a
-.I const u_char
+.B const u_char *
 to the first
 .B caplen
 bytes of the packet on success, and
@@ -653,11 +631,11 @@ on error.
 .PP
 .BR pcap_next_ex ()
 is passed two pointer arguments, one of which points to a
-.IR struct pcap_pkthdr *
-and one of which points to a
-.IR "const u_char" *.
+.B struct pcap_pkthdr *
+and the other points to a
+.BR "const u_char *" .
 It sets the first pointer to point to a
-.I struct pcap_pkthdr
+.B struct pcap_pkthdr
 structure with the time stamp and length values for the packet, and sets
 the second pointer to point to the first
 .B caplen
@@ -870,9 +848,6 @@ get capture statistics
 .SS Opening a handle for writing captured packets
 To open a ``savefile`` to which to write packets, given the pathname the
 ``savefile'' should have, call
-.BR pcap_dump_open ().
-To open a ``savefile`` to which to write packets, given the pathname the
-``savefile'' should have, call
 .BR pcap_dump_open ();
 to set up a handle for a ``savefile'', given a
 .B "FILE\ *"
@@ -1034,7 +1009,7 @@ script or some other configuration script to check whether the libpcap
 .BR tcpdump (1),
 .BR tcpslice (1),
 .BR \%pcap-filter (@MAN_MISC_INFO@),
-.BR pfconfig (8),
+.BR bpf (@MAN_DEVICES@),
 .BR usermod (@MAN_ADMIN_COMMANDS@)
 .SH AUTHORS
 The original authors of libpcap are:

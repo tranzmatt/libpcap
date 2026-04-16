@@ -29,9 +29,7 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <errno.h>
 #include <stdint.h>
@@ -43,6 +41,7 @@
 
 #include "pcap/bluetooth.h"
 #include "pcap-int.h"
+#include "diag-control.h"
 
 #include "pcap-bt-monitor-linux.h"
 
@@ -80,11 +79,11 @@ bt_monitor_findalldevs(pcap_if_list_t *devlistp, char *err_str)
      * more than there's a notion of "connected" or "disconnected"
      * for the "any" device.
      */
-    if (add_dev(devlistp, INTERFACE_NAME,
+    if (pcapint_add_dev(devlistp, INTERFACE_NAME,
                 PCAP_IF_WIRELESS|PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
                 "Bluetooth Linux Monitor", err_str) == NULL)
     {
-        ret = -1;
+        ret = PCAP_ERROR;
     }
 
     return ret;
@@ -102,7 +101,7 @@ bt_monitor_read(pcap_t *handle, int max_packets _U_, pcap_handler callback, u_ch
     u_char *pktd;
     struct hci_mon_hdr hdr;
 
-    pktd = (u_char *)handle->buffer + BT_CONTROL_SIZE;
+    pktd = handle->buffer + BT_CONTROL_SIZE;
     bthdr = (pcap_bluetooth_linux_monitor_header*)(void *)pktd;
 
     iv[0].iov_base = &hdr;
@@ -118,12 +117,12 @@ bt_monitor_read(pcap_t *handle, int max_packets _U_, pcap_handler callback, u_ch
     msg.msg_controllen = BT_CONTROL_SIZE;
 
     do {
-        ret = recvmsg(handle->fd, &msg, 0);
         if (handle->break_loop)
         {
             handle->break_loop = 0;
-            return -2;
+            return PCAP_ERROR_BREAK;
         }
+        ret = recvmsg(handle->fd, &msg, 0);
     } while ((ret == -1) && (errno == EINTR));
 
     if (ret < 0) {
@@ -131,15 +130,18 @@ bt_monitor_read(pcap_t *handle, int max_packets _U_, pcap_handler callback, u_ch
             /* Nonblocking mode, no data */
             return 0;
         }
-        pcap_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
+        pcapint_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
             errno, "Can't receive packet");
-        return -1;
+        return PCAP_ERROR;
     }
 
     pkth.caplen = (bpf_u_int32)(ret - sizeof(hdr) + sizeof(pcap_bluetooth_linux_monitor_header));
     pkth.len = pkth.caplen;
 
+    // for musl libc CMSG_NXTHDR()
+DIAG_OFF_SIGN_COMPARE
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+DIAG_ON_SIGN_COMPARE
         if (cmsg->cmsg_level != SOL_SOCKET) continue;
 
         if (cmsg->cmsg_type == SCM_TIMESTAMP) {
@@ -151,7 +153,7 @@ bt_monitor_read(pcap_t *handle, int max_packets _U_, pcap_handler callback, u_ch
     bthdr->opcode = htons(hdr.opcode);
 
     if (handle->fcode.bf_insns == NULL ||
-        pcap_filter(handle->fcode.bf_insns, pktd, pkth.len, pkth.caplen)) {
+        pcapint_filter(handle->fcode.bf_insns, pktd, pkth.len, pkth.caplen)) {
         callback(user, &pkth, pktd);
         return 1;
     }
@@ -163,7 +165,7 @@ bt_monitor_inject(pcap_t *handle, const void *buf _U_, int size _U_)
 {
     snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
         "Packet injection is not supported yet on Bluetooth monitor devices");
-    return -1;
+    return PCAP_ERROR;
 }
 
 static int
@@ -180,7 +182,7 @@ static int
 bt_monitor_activate(pcap_t* handle)
 {
     struct sockaddr_hci addr;
-    int err = PCAP_ERROR;
+    int err;
     int opt;
 
     if (handle->opt.rfmon) {
@@ -204,24 +206,25 @@ bt_monitor_activate(pcap_t* handle)
 
     handle->read_op = bt_monitor_read;
     handle->inject_op = bt_monitor_inject;
-    handle->setfilter_op = install_bpf_program; /* no kernel filtering */
+    handle->setfilter_op = pcapint_install_bpf_program; /* no kernel filtering */
     handle->setdirection_op = NULL; /* Not implemented */
     handle->set_datalink_op = NULL; /* can't change data link type */
-    handle->getnonblock_op = pcap_getnonblock_fd;
-    handle->setnonblock_op = pcap_setnonblock_fd;
+    handle->getnonblock_op = pcapint_getnonblock_fd;
+    handle->setnonblock_op = pcapint_setnonblock_fd;
     handle->stats_op = bt_monitor_stats;
 
     handle->fd = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
     if (handle->fd < 0) {
-        pcap_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
+        pcapint_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
             errno, "Can't create raw socket");
         return PCAP_ERROR;
     }
 
     handle->buffer = malloc(handle->bufsize);
     if (!handle->buffer) {
-        pcap_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
+        pcapint_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
             errno, "Can't allocate dump buffer");
+        err = PCAP_ERROR;
         goto close_fail;
     }
 
@@ -231,15 +234,23 @@ bt_monitor_activate(pcap_t* handle)
     addr.hci_channel = HCI_CHANNEL_MONITOR;
 
     if (bind(handle->fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        pcap_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
-            errno, "Can't attach to interface");
+        if (errno == EPERM) {
+            snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
+                "Can't attach to interface - CAP_NET_RAW may be required");
+            err = PCAP_ERROR_PERM_DENIED;
+        } else {
+            pcapint_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
+                errno, "Can't attach to interface");
+            err = PCAP_ERROR;
+        }
         goto close_fail;
     }
 
     opt = 1;
     if (setsockopt(handle->fd, SOL_SOCKET, SO_TIMESTAMP, &opt, sizeof(opt)) < 0) {
-        pcap_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
+        pcapint_fmt_errmsg_for_errno(handle->errbuf, PCAP_ERRBUF_SIZE,
             errno, "Can't enable time stamp");
+        err = PCAP_ERROR;
         goto close_fail;
     }
 
@@ -248,7 +259,7 @@ bt_monitor_activate(pcap_t* handle)
     return 0;
 
 close_fail:
-    pcap_cleanup_live_common(handle);
+    pcapint_cleanup_live_common(handle);
     return err;
 }
 
@@ -256,13 +267,8 @@ pcap_t *
 bt_monitor_create(const char *device, char *ebuf, int *is_ours)
 {
     pcap_t      *p;
-    const char  *cp;
 
-    cp = strrchr(device, '/');
-    if (cp == NULL)
-        cp = device;
-
-    if (strcmp(cp, INTERFACE_NAME) != 0) {
+    if (strcmp(device, INTERFACE_NAME) != 0) {
         *is_ours = 0;
         return NULL;
     }

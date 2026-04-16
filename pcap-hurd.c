@@ -3,9 +3,7 @@
 /* XXX Hack not to include the Mach BPF interface */
 #define _DEVICE_BPF_H_
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <config.h>
 
 #include <fcntl.h>
 #include <hurd.h>
@@ -27,23 +25,108 @@ struct pcap_hurd {
 	struct pcap_stat stat;
 	device_t mach_dev;
 	mach_port_t rcv_port;
+	int filtering_in_kernel;
 };
 
+/* Accept all packets. */
 static struct bpf_insn filter[] = {
 	{ NETF_IN | NETF_OUT | NETF_BPF, 0, 0, 0 },
 	{ BPF_RET | BPF_K, 0, 0, MAXIMUM_SNAPLEN },
 };
 
-#define FILTER_COUNT (sizeof(filter) / sizeof(short))
+/* device_set_filter calls net_set_filter which uses CSPF_BYTES which counts in
+ * shorts, not elements, so using extra parenthesis to silence compilers which
+ * believe we are computing wrong here. */
+#define FILTER_COUNT (sizeof(filter) / (sizeof(short)))
+
+/*
+ * strerror() on GNU/Hurd maps Mach error messages to strings,
+ * so we can use pcapint_fmt_errmsg_for_errno() to format
+ * messages for them.
+ */
+#define pcapint_fmt_errmsg_for_kern_return_t	pcapint_fmt_errmsg_for_errno
 
 static int
-pcap_read_hurd(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
+PCAP_WARN_UNUSED_RESULT
+pcap_device_set_filter(pcap_t *p, filter_array_t filter_array,
+                       const mach_msg_type_number_t filter_count)
+{
+	kern_return_t kr;
+	struct pcap_hurd *ph = p->priv;
+	kr = device_set_filter(ph->mach_dev, ph->rcv_port,
+	                       MACH_MSG_TYPE_MAKE_SEND, 0,
+	                       filter_array, filter_count);
+	if (! kr)
+		return 0;
+	pcapint_fmt_errmsg_for_kern_return_t(p->errbuf, PCAP_ERRBUF_SIZE, kr,
+	    "device_set_filter");
+	return PCAP_ERROR;
+}
+
+static int
+pcap_setfilter_hurd(pcap_t *p, struct bpf_program *program)
+{
+	if (! program || pcapint_install_bpf_program(p, program) < 0) {
+		pcapint_strlcpy(p->errbuf, "setfilter: invalid program",
+		                sizeof(p->errbuf));
+		return PCAP_ERROR;
+	}
+
+	/*
+	 * The bytecode is valid and the copy in p->fcode can be used for
+	 * userland filtering if kernel filtering does not work out.
+	 *
+	 * The kernel BPF implementation supports neither BPF_MOD nor BPF_XOR,
+	 * it also fails to reject unsupported bytecode properly, so the check
+	 * must be done here.
+	 */
+	struct pcap_hurd *ph = p->priv;
+	for (u_int i = 0; i < program->bf_len; i++) {
+		u_short	c = program->bf_insns[i].code;
+		if (BPF_CLASS(c) == BPF_ALU &&
+		    (BPF_OP(c) == BPF_MOD || BPF_OP(c) == BPF_XOR))
+			goto userland;
+	}
+
+	/*
+	 * The kernel takes an array of 16-bit Hurd network filter commands, no
+	 * more than NET_MAX_FILTER elements.  The first four commands form a
+	 * header that says "BPF bytecode follows", the rest is a binary copy
+	 * of 64-bit instructions of the required BPF bytecode.
+	 */
+	mach_msg_type_number_t cmdcount = 4 + 4 * program->bf_len;
+	if (cmdcount > NET_MAX_FILTER)
+		goto userland;
+
+	filter_t cmdbuffer[NET_MAX_FILTER];
+	memcpy(cmdbuffer, filter, sizeof(struct bpf_insn));
+	memcpy(cmdbuffer + 4, program->bf_insns,
+	       program->bf_len * sizeof(struct bpf_insn));
+	if (pcap_device_set_filter(p, cmdbuffer, cmdcount))
+		goto userland;
+	ph->filtering_in_kernel = 1;
+	return 0;
+
+userland:
+	/*
+	 * Could not install a new kernel filter for a reason, so replace any
+	 * previous kernel filter with one that accepts all packets and lets
+	 * userland filtering do the job.  If that fails too, something is
+	 * badly broken and even userland filtering would not work correctly,
+	 * so expose the failure.
+	 */
+	ph->filtering_in_kernel = 0;
+	return pcap_device_set_filter(p, (filter_array_t)filter, FILTER_COUNT);
+}
+
+static int
+pcap_read_hurd(pcap_t *p, int cnt _U_, pcap_handler callback, u_char *user)
 {
 	struct net_rcv_msg *msg;
 	struct pcap_hurd *ph;
 	struct pcap_pkthdr h;
 	struct timespec ts;
-	int ret, wirelen, caplen;
+	int wirelen, caplen;
 	u_char *pkt;
 	kern_return_t kr;
 
@@ -59,19 +142,26 @@ retry:
 	kr = mach_msg(&msg->msg_hdr, MACH_RCV_MSG | MACH_RCV_INTERRUPT, 0,
 		      p->bufsize, ph->rcv_port, MACH_MSG_TIMEOUT_NONE,
 		      MACH_PORT_NULL);
+	clock_gettime(CLOCK_REALTIME, &ts);
 
 	if (kr) {
 		if (kr == MACH_RCV_INTERRUPTED)
 			goto retry;
 
-		snprintf(p->errbuf, sizeof(p->errbuf), "mach_msg: %s",
-			 pcap_strerror(kr));
+		pcapint_fmt_errmsg_for_kern_return_t(p->errbuf, PCAP_ERRBUF_SIZE, kr,
+		    "mach_msg");
 		return PCAP_ERROR;
 	}
 
 	ph->stat.ps_recv++;
 
 	/* XXX Ethernet support only */
+	/*
+	 * wirelen calculation assumes the following:
+	 *   msg->packet_type.msgt_name == MACH_MSG_TYPE_BYTE
+	 *   msg->packet_type.msgt_size == 8
+	 *   msg->packet_type.msgt_number is a size in bytes
+	 */
 	wirelen = ETH_HLEN + msg->net_rcv_msg_packet_count
 		  - sizeof(struct packet_header);
 	pkt = p->buffer + offsetof(struct net_rcv_msg, packet)
@@ -79,20 +169,32 @@ retry:
 	memmove(pkt, p->buffer + offsetof(struct net_rcv_msg, header),
 		ETH_HLEN);
 
+	/*
+	 * It seems, kernel device filters treat the K in BPF_RET as a Boolean:
+	 * so long as it is positive, the Mach message will contain the entire
+	 * packet and wirelen will be set accordingly.  Thus the caplen value
+	 * for the callback needs to be calculated for every packet no matter
+	 * which type of filtering is in effect.
+	 *
+	 * For the userland filtering this calculated value is not an input:
+	 * buflen always equals wirelen and a userland program can examine the
+	 * entire packet, same way as a kernel program.  It is not an output
+	 * either: pcapint_filter() returns either zero or MAXIMUM_SNAPLEN.
+	 * The same principle applies to kernel filtering.
+	 */
 	caplen = (wirelen > p->snapshot) ? p->snapshot : wirelen;
-	ret = bpf_filter(p->fcode.bf_insns, pkt, wirelen, caplen);
 
-	if (!ret)
-		goto out;
+	if (! ph->filtering_in_kernel &&
+	    ! pcapint_filter(p->fcode.bf_insns, pkt, wirelen, wirelen)) {
+		ph->stat.ps_drop++;
+		return 0;
+	}
 
-	clock_gettime(CLOCK_REALTIME, &ts);
 	h.ts.tv_sec = ts.tv_sec;
 	h.ts.tv_usec = ts.tv_nsec / 1000;
 	h.len = wirelen;
 	h.caplen = caplen;
 	callback(user, &h, pkt);
-
-out:
 	return 1;
 }
 
@@ -108,8 +210,8 @@ pcap_inject_hurd(pcap_t *p, const void *buf, int size)
 			  (io_buf_ptr_t)buf, size, &count);
 
 	if (kr) {
-		snprintf(p->errbuf, sizeof(p->errbuf), "device_write: %s",
-			 pcap_strerror(kr));
+		pcapint_fmt_errmsg_for_kern_return_t(p->errbuf, PCAP_ERRBUF_SIZE, kr,
+		    "device_write");
 		return -1;
 	}
 
@@ -143,7 +245,7 @@ pcap_cleanup_hurd(pcap_t *p)
 		ph->mach_dev = MACH_PORT_NULL;
 	}
 
-	pcap_cleanup_live_common(p);
+	pcapint_cleanup_live_common(p);
 }
 
 static int
@@ -152,8 +254,12 @@ pcap_activate_hurd(pcap_t *p)
 	struct pcap_hurd *ph;
 	mach_port_t master;
 	kern_return_t kr;
+	int ret = PCAP_ERROR;
 
 	ph = p->priv;
+
+	if (p->snapshot <= 0 || p->snapshot > MAXIMUM_SNAPLEN)
+		p->snapshot = MAXIMUM_SNAPLEN;
 
 	/* Try devnode first */
 	master = file_name_lookup(p->opt.device, O_READ | O_WRITE, 0);
@@ -165,8 +271,10 @@ pcap_activate_hurd(pcap_t *p)
 		kr = get_privileged_ports(NULL, &master);
 
 		if (kr) {
-			snprintf(p->errbuf, sizeof(p->errbuf),
-				 "get_privileged_ports: %s", pcap_strerror(kr));
+			pcapint_fmt_errmsg_for_kern_return_t(p->errbuf,
+			    PCAP_ERRBUF_SIZE, kr, "get_privileged_ports");
+			if (kr == EPERM)
+				ret = PCAP_ERROR_PERM_DENIED;
 			goto error;
 		}
 
@@ -177,8 +285,10 @@ pcap_activate_hurd(pcap_t *p)
 	mach_port_deallocate(mach_task_self(), master);
 
 	if (kr) {
-		snprintf(p->errbuf, sizeof(p->errbuf), "device_open: %s",
-			 pcap_strerror(kr));
+		pcapint_fmt_errmsg_for_kern_return_t(p->errbuf, PCAP_ERRBUF_SIZE, kr,
+		    "device_open");
+		if (kr == ED_NO_SUCH_DEVICE) /* not ENODEV */
+			ret = PCAP_ERROR_NO_SUCH_DEVICE;
 		goto error;
 	}
 
@@ -186,52 +296,52 @@ pcap_activate_hurd(pcap_t *p)
 				&ph->rcv_port);
 
 	if (kr) {
-		snprintf(p->errbuf, sizeof(p->errbuf), "mach_port_allocate: %s",
-			 pcap_strerror(kr));
+		pcapint_fmt_errmsg_for_kern_return_t(p->errbuf, PCAP_ERRBUF_SIZE, kr,
+		    "mach_port_allocate");
 		goto error;
 	}
-
-	kr = device_set_filter(ph->mach_dev, ph->rcv_port,
-			       MACH_MSG_TYPE_MAKE_SEND, 0,
-			       (filter_array_t)filter, FILTER_COUNT);
-
-	if (kr) {
-		snprintf(p->errbuf, sizeof(p->errbuf), "device_set_filter: %s",
-			 pcap_strerror(kr));
-		goto error;
-	}
-
-	/* XXX Ethernet only currently */
-	p->linktype = DLT_EN10MB;
 
 	p->bufsize = sizeof(struct net_rcv_msg);
 	p->buffer = malloc(p->bufsize);
 
 	if (p->buffer == NULL) {
-		snprintf(p->errbuf, sizeof(p->errbuf), "malloc: %s",
-			 pcap_strerror(errno));
+		pcapint_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "malloc");
 		goto error;
 	}
 
-	p->dlt_list = malloc(sizeof(*p->dlt_list));
-
-	if (p->dlt_list != NULL)
-		*p->dlt_list = DLT_EN10MB;
+	/*
+	 * XXX Ethernet only currently
+	 *
+	 * XXX - does "Ethernet only currently" mean "the only devices
+	 * on which the Hurd supports packet capture are Ethernet
+	 * devices", or "it supports other devices but makes them
+	 * all provide Ethernet headers"?
+	 *
+	 * If the latter, is there a way to determine whether the
+	 * device is a real Ethernet, so that we could offer DLT_DOCSIS,
+	 * in case you're capturing DOCSIS traffic that a Cisco Cable
+	 * Modem Termination System is putting out onto an Ethernet
+	 * (it doesn't put an Ethernet header onto the wire, it puts
+	 * raw DOCSIS frames out on the wire inside the low-level
+	 * Ethernet framing)?
+	 */
+	p->linktype = DLT_EN10MB;
 
 	p->read_op = pcap_read_hurd;
 	p->inject_op = pcap_inject_hurd;
-	p->setfilter_op = install_bpf_program;
+	p->setfilter_op = pcap_setfilter_hurd;
 	p->stats_op = pcap_stats_hurd;
 
 	return 0;
 
 error:
 	pcap_cleanup_hurd(p);
-	return PCAP_ERROR;
+	return ret;
 }
 
 pcap_t *
-pcap_create_interface(const char *device _U_, char *ebuf)
+pcapint_create_interface(const char *device _U_, char *ebuf)
 {
 	struct pcap_hurd *ph;
 	pcap_t *p;
@@ -247,10 +357,34 @@ pcap_create_interface(const char *device _U_, char *ebuf)
 	return p;
 }
 
-int
-pcap_platform_finddevs(pcap_if_list_t *alldevsp, char *errbuf)
+static int
+can_be_bound(const char *name)
 {
+	/*
+	 * On Hurd lo appears in the list of interfaces, but the call to
+	 * device_open() fails with: "(os/device) no such device".
+	 */
+	if (! strcmp(name, "lo"))
+		return 0;
+	return 1;
+}
+
+static int
+get_if_flags(const char *name _U_, bpf_u_int32 *flags, char *errbuf _U_)
+{
+	/*
+	 * This would apply to the loopback interface if it worked.  Ethernet
+	 * interfaces appear up and running regardless of the link status.
+	 */
+	*flags |= PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE;
 	return 0;
+}
+
+int
+pcapint_platform_finddevs(pcap_if_list_t *devlistp, char *errbuf)
+{
+	return pcapint_findalldevs_interfaces(devlistp, errbuf, can_be_bound,
+	                                      get_if_flags);
 }
 
 /*

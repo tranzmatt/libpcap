@@ -28,9 +28,7 @@
  * dependent values so we can print the dump file on any architecture.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <pcap-types.h>
 #ifdef _WIN32
@@ -73,16 +71,10 @@ static pcap_t *pcap_fopen_offline_with_tstamp_precision(FILE *, u_int, char *);
 #endif
 
 /*
- * Setting O_BINARY on DOS/Windows is a bit tricky
+ * Setting O_BINARY on Windows is a bit tricky.
  */
 #if defined(_WIN32)
   #define SET_BINMODE(f)  _setmode(_fileno(f), _O_BINARY)
-#elif defined(MSDOS)
-  #if defined(__HIGHC__)
-  #define SET_BINMODE(f)  setmode(f, O_BINARY)
-  #else
-  #define SET_BINMODE(f)  setmode(fileno(f), O_BINARY)
-  #endif
 #endif
 
 static int
@@ -109,6 +101,16 @@ sf_setnonblock(pcap_t *p, int nonblock _U_)
 	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "Savefiles cannot be put into non-blocking mode");
 	return (-1);
+}
+
+static int
+sf_cant_set_rfmon(pcap_t *p _U_)
+{
+	/*
+	 * This is a savefile, not a device on which you can capture,
+	 * so never say it supports being put into monitor mode.
+	 */
+	return (0);
 }
 
 static int
@@ -181,7 +183,7 @@ sf_oid_set_request(pcap_t *p, bpf_u_int32 oid _U_, const void *data _U_,
 static u_int
 sf_sendqueue_transmit(pcap_t *p, pcap_send_queue *queue _U_, int sync _U_)
 {
-	pcap_strlcpy(p->errbuf, "Sending packets isn't supported on savefiles",
+	pcapint_strlcpy(p->errbuf, "Sending packets isn't supported on savefiles",
 	    PCAP_ERRBUF_SIZE);
 	return (0);
 }
@@ -209,18 +211,12 @@ sf_live_dump_ended(pcap_t *p, int sync _U_)
 	    "Live packet dumping cannot be performed on a pcap_open_dead pcap_t");
 	return (-1);
 }
-
-static PAirpcapHandle
-sf_get_airpcap_handle(pcap_t *pcap _U_)
-{
-	return (NULL);
-}
 #endif
 
 static int
 sf_inject(pcap_t *p, const void *buf _U_, int size _U_)
 {
-	pcap_strlcpy(p->errbuf, "Sending packets isn't supported on savefiles",
+	pcapint_strlcpy(p->errbuf, "Sending packets isn't supported on savefiles",
 	    PCAP_ERRBUF_SIZE);
 	return (-1);
 }
@@ -238,7 +234,7 @@ sf_setdirection(pcap_t *p, pcap_direction_t d _U_)
 }
 
 void
-sf_cleanup(pcap_t *p)
+pcapint_sf_cleanup(pcap_t *p)
 {
 	if (p->rfile != stdin)
 		(void)fclose(p->rfile);
@@ -258,7 +254,7 @@ sf_cleanup(pcap_t *p)
  * local code page.
  */
 FILE *
-charset_fopen(const char *path, const char *mode)
+pcapint_charset_fopen(const char *path, const char *mode)
 {
 	wchar_t *utf16_path;
 #define MAX_MODE_LEN	16
@@ -268,7 +264,7 @@ charset_fopen(const char *path, const char *mode)
 	FILE *fp;
 	int save_errno;
 
-	if (pcap_utf_8_mode) {
+	if (pcapint_utf_8_mode) {
 		/*
 		 * Map from UTF-8 to UTF-16LE.
 		 * Fail if there are invalid characters in the input
@@ -355,7 +351,7 @@ pcap_open_offline_with_tstamp_precision(const char *fname, u_int precision,
 			    "The standard input is not open");
 			return (NULL);
 		}
-#if defined(_WIN32) || defined(MSDOS)
+#if defined(_WIN32)
 		/*
 		 * We're reading from the standard input, so put it in binary
 		 * mode, as savefiles are binary files.
@@ -365,18 +361,17 @@ pcap_open_offline_with_tstamp_precision(const char *fname, u_int precision,
 	}
 	else {
 		/*
-		 * Use charset_fopen(); on Windows, it tests whether we're
+		 * Use pcapint_charset_fopen(); on Windows, it tests whether we're
 		 * in "local code page" or "UTF-8" mode, and treats the
 		 * pathname appropriately, and on other platforms, it just
 		 * wraps fopen().
 		 *
 		 * "b" is supported as of C90, so *all* UN*Xes should
-		 * support it, even though it does nothing.  For MS-DOS,
-		 * we again need it.
+		 * support it, even though it does nothing.
 		 */
-		fp = charset_fopen(fname, "rb");
+		fp = pcapint_charset_fopen(fname, "rb");
 		if (fp == NULL) {
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "%s", fname);
 			return (NULL);
 		}
@@ -406,7 +401,7 @@ pcap_t* pcap_hopen_offline_with_tstamp_precision(intptr_t osfd, u_int precision,
 	fd = _open_osfhandle(osfd, _O_RDONLY);
 	if ( fd < 0 )
 	{
-		pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "_open_osfhandle");
 		return NULL;
 	}
@@ -414,7 +409,7 @@ pcap_t* pcap_hopen_offline_with_tstamp_precision(intptr_t osfd, u_int precision,
 	file = _fdopen(fd, "rb");
 	if ( file == NULL )
 	{
-		pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "_fdopen");
 		_close(fd);
 		return NULL;
@@ -441,7 +436,7 @@ pcap_t* pcap_hopen_offline(intptr_t osfd, char *errbuf)
  * signed is that pcap_snapshot() returns an int, not an unsigned int.
  */
 bpf_u_int32
-pcap_adjust_snapshot(bpf_u_int32 linktype, bpf_u_int32 snaplen)
+pcapint_adjust_snapshot(bpf_u_int32 linktype, bpf_u_int32 snaplen)
 {
 	if (snaplen == 0 || snaplen > INT_MAX) {
 		/*
@@ -472,7 +467,7 @@ pcap_t *
 pcap_fopen_offline_with_tstamp_precision(FILE *fp, u_int precision,
     char *errbuf)
 {
-	register pcap_t *p;
+	pcap_t *p;
 	uint8_t magic[4];
 	size_t amt_read;
 	u_int i;
@@ -501,7 +496,7 @@ pcap_fopen_offline_with_tstamp_precision(FILE *fp, u_int precision,
 	amt_read = fread(&magic, 1, sizeof(magic), fp);
 	if (amt_read != sizeof(magic)) {
 		if (ferror(fp)) {
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "error reading dump file");
 		} else {
 			snprintf(errbuf, PCAP_ERRBUF_SIZE,
@@ -540,7 +535,7 @@ found:
 	/* Padding only needed for live capture fcode */
 	p->fddipad = 0;
 
-#if !defined(_WIN32) && !defined(MSDOS)
+#if !defined(_WIN32)
 	/*
 	 * You can do "select()" and "poll()" on plain files on most
 	 * platforms, and should be able to do so on pipes.
@@ -551,9 +546,10 @@ found:
 	p->selectable_fd = fileno(fp);
 #endif
 
-	p->read_op = pcap_offline_read;
+	p->can_set_rfmon_op = sf_cant_set_rfmon;
+	p->read_op = pcapint_offline_read;
 	p->inject_op = sf_inject;
-	p->setfilter_op = install_bpf_program;
+	p->setfilter_op = pcapint_install_bpf_program;
 	p->setdirection_op = sf_setdirection;
 	p->set_datalink_op = NULL;	/* we don't support munging link-layer headers */
 	p->getnonblock_op = sf_getnonblock;
@@ -571,24 +567,33 @@ found:
 	p->setuserbuffer_op = sf_setuserbuffer;
 	p->live_dump_op = sf_live_dump;
 	p->live_dump_ended_op = sf_live_dump_ended;
-	p->get_airpcap_handle_op = sf_get_airpcap_handle;
 #endif
 
 	/*
 	 * For offline captures, the standard one-shot callback can
 	 * be used for pcap_next()/pcap_next_ex().
 	 */
-	p->oneshot_callback = pcap_oneshot;
+	p->oneshot_callback = pcapint_oneshot;
 
 	/*
 	 * Default breakloop operation.
 	 */
-	p->breakloop_op = pcap_breakloop_common;
+	p->breakloop_op = pcapint_breakloop_common;
 
 	/*
-	 * Savefiles never require special BPF code generation.
+	 * For link-layer headers in which the packet type is indicated
+	 * by an AF_ value, we don't know what OS generated it, so we
+	 * don't know what numerical value corresponds to AF_INET6, and
+	 * we don't know the byte order of the host that originally
+	 * captured the packets in the file (as opposed to the host
+	 * that *wrote* this file), so we don't know the byte order
+	 * of multi-byte AF_ values.
+	 *
+	 * That requires different filtering code than a live capture.
+	 *
+	 * Savefiles don't require any other special BPF code generation.
 	 */
-	p->bpf_codegen_flags = 0;
+	p->bpf_codegen_flags = BPF_OFFLINE_AF_HANDLING;
 
 	p->activated = 1;
 
@@ -615,7 +620,7 @@ pcap_fopen_offline(FILE *fp, char *errbuf)
  * If cnt > 0, return after 'cnt' packets, otherwise continue until eof.
  */
 int
-pcap_offline_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
+pcapint_offline_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 {
 	struct bpf_insn *fcode;
 	int n = 0;
@@ -676,7 +681,7 @@ pcap_offline_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		 * and, if it passes, process it.
 		 */
 		if ((fcode = p->fcode.bf_insns) == NULL ||
-		    pcap_filter(fcode, data, h.len, h.caplen)) {
+		    pcapint_filter(fcode, data, h.len, h.caplen)) {
 			(*callback)(user, &h, data);
 			n++;	/* count the packet */
 			if (n >= cnt)

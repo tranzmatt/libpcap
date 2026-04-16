@@ -64,7 +64,7 @@
   /*
    * We need this to get the versions of socket functions that
    * use socklen_t.  Define it only if it's not already defined,
-   * so we don't get redefiniton warnings.
+   * so we don't get redefinition warnings.
    */
   #ifndef _XOPEN_SOURCE_EXTENDED
     #define _XOPEN_SOURCE_EXTENDED
@@ -95,13 +95,17 @@
    *
    * Unfortunately, one thing it has to offer is a strerror_r()
    * that's not POSIX-compliant, but we deal with that in
-   * pcap_fmt_errmsg_for_errno().
+   * pcapint_fmt_errmsg_for_errno().
    *
    * We don't limit this to, for example, Linux and Cygwin, because
    * this might, for example, be GNU/HURD or one of Debian's kFreeBSD
    * OSes ("GNU/FreeBSD").
+   *
+   * Avoid redefining, same as below.
    */
-  #define _GNU_SOURCE
+  #ifndef _GNU_SOURCE
+    #define _GNU_SOURCE
+  #endif
 
   /*
    * We turn on both _DEFAULT_SOURCE and _BSD_SOURCE to try to get

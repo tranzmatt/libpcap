@@ -22,43 +22,11 @@
  * These functions are not time critical.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
-
-#ifdef DECNETLIB
-#include <sys/types.h>
-#include <netdnet/dnetdb.h>
-#endif
 
 #ifdef _WIN32
   #include <winsock2.h>
   #include <ws2tcpip.h>
-
-  #ifdef INET6
-    /*
-     * To quote the MSDN page for getaddrinfo() at
-     *
-     *    https://msdn.microsoft.com/en-us/library/windows/desktop/ms738520(v=vs.85).aspx
-     *
-     * "Support for getaddrinfo on Windows 2000 and older versions
-     * The getaddrinfo function was added to the Ws2_32.dll on Windows XP and
-     * later. To execute an application that uses this function on earlier
-     * versions of Windows, then you need to include the Ws2tcpip.h and
-     * Wspiapi.h files. When the Wspiapi.h include file is added, the
-     * getaddrinfo function is defined to the WspiapiGetAddrInfo inline
-     * function in the Wspiapi.h file. At runtime, the WspiapiGetAddrInfo
-     * function is implemented in such a way that if the Ws2_32.dll or the
-     * Wship6.dll (the file containing getaddrinfo in the IPv6 Technology
-     * Preview for Windows 2000) does not include getaddrinfo, then a
-     * version of getaddrinfo is implemented inline based on code in the
-     * Wspiapi.h header file. This inline code will be used on older Windows
-     * platforms that do not natively support the getaddrinfo function."
-     *
-     * We use getaddrinfo(), so we include Wspiapi.h here.
-     */
-    #include <wspiapi.h>
-  #endif /* INET6 */
 #else /* _WIN32 */
   #include <sys/param.h>
   #include <sys/types.h>
@@ -66,6 +34,17 @@
   #include <sys/time.h>
 
   #include <netinet/in.h>
+
+  #if defined(__linux__) && defined(HAVE_ETHER_HOSTTON)
+    #include <features.h>
+    #if ! defined(__GLIBC__) && ! defined(__UCLIBC__)
+      /*
+       * In musl libc (which does not identify itself) ether_hostton() is
+       * present and does not work.
+       */
+      #undef HAVE_ETHER_HOSTTON
+    #endif
+  #endif // defined(__linux__) && defined(HAVE_ETHER_HOSTTON)
 
   #ifdef HAVE_ETHER_HOSTTON
     #if defined(NET_ETHERNET_H_DECLARES_ETHER_HOSTTON)
@@ -140,13 +119,14 @@
 #include <pcap/namedb.h>
 #include "nametoaddr.h"
 
+#include "thread-local.h"
+
 #ifdef HAVE_OS_PROTO_H
 #include "os-proto.h"
 #endif
 
 #ifndef NTOHL
 #define NTOHL(x) (x) = ntohl(x)
-#define NTOHS(x) (x) = ntohs(x)
 #endif
 
 /*
@@ -267,7 +247,7 @@ pcap_nametonetaddr(const char *name)
 	 * *not* always get set if getnetbyname_r() succeeds.
 	 */
 	np = NULL;
- 	err = getnetbyname_r(name, &result_buf, buf, sizeof buf, &np,
+	err = getnetbyname_r(name, &result_buf, buf, sizeof buf, &np,
 	    &h_errnoval);
 	if (err != 0) {
 		/*
@@ -276,9 +256,9 @@ pcap_nametonetaddr(const char *name)
 		 */
 		return 0;
 	}
-  #elif defined(HAVE_SOLARIS_IRIX_GETNETBYNAME_R)
+  #elif defined(HAVE_SOLARIS_GETNETBYNAME_R)
 	/*
-	 * We have Solaris's and IRIX's reentrant getnetbyname_r().
+	 * We have Solaris's reentrant getnetbyname_r().
 	 */
 	struct netent result_buf;
 	char buf[1024];	/* arbitrary size */
@@ -296,16 +276,16 @@ pcap_nametonetaddr(const char *name)
 	else
 		np = &result_buf;
   #else
- 	/*
- 	 * We don't have any getnetbyname_r(); either we have a
- 	 * getnetbyname() that uses thread-specific data, in which
- 	 * case we're thread-safe (sufficiently recent FreeBSD,
- 	 * sufficiently recent Darwin-based OS, sufficiently recent
- 	 * HP-UX, sufficiently recent Tru64 UNIX), or we have the
- 	 * traditional getnetbyname() (everything else, including
- 	 * current NetBSD and OpenBSD), in which case we're not
- 	 * thread-safe.
- 	 */
+	/*
+	 * We don't have any getnetbyname_r(); either we have a
+	 * getnetbyname() that uses thread-specific data, in which
+	 * case we're thread-safe (sufficiently recent FreeBSD,
+	 * sufficiently recent Darwin-based OS, sufficiently recent
+	 * HP-UX, or we have the
+	 * traditional getnetbyname() (everything else, including
+	 * current NetBSD and OpenBSD), in which case we're not
+	 * thread-safe.
+	 */
 	np = getnetbyname(name);
   #endif
 	if (np != NULL)
@@ -326,9 +306,7 @@ pcap_nametoport(const char *name, int *port, int *proto)
 	struct addrinfo hints, *res, *ai;
 	int error;
 	struct sockaddr_in *in4;
-#ifdef INET6
 	struct sockaddr_in6 *in6;
-#endif
 	int tcp_port = -1;
 	int udp_port = -1;
 
@@ -368,13 +346,11 @@ pcap_nametoport(const char *name, int *port, int *proto)
 					tcp_port = ntohs(in4->sin_port);
 					break;
 				}
-#ifdef INET6
 				if (ai->ai_addr->sa_family == AF_INET6) {
 					in6 = (struct sockaddr_in6 *)ai->ai_addr;
 					tcp_port = ntohs(in6->sin6_port);
 					break;
 				}
-#endif
 			}
 		}
 		freeaddrinfo(res);
@@ -412,13 +388,11 @@ pcap_nametoport(const char *name, int *port, int *proto)
 					udp_port = ntohs(in4->sin_port);
 					break;
 				}
-#ifdef INET6
 				if (ai->ai_addr->sa_family == AF_INET6) {
 					in6 = (struct sockaddr_in6 *)ai->ai_addr;
 					udp_port = ntohs(in6->sin6_port);
 					break;
 				}
-#endif
 			}
 		}
 		freeaddrinfo(res);
@@ -451,14 +425,6 @@ pcap_nametoport(const char *name, int *port, int *proto)
 		*proto = IPPROTO_UDP;
 		return 1;
 	}
-#if defined(ultrix) || defined(__osf__)
-	/* Special hack in case NFS isn't in /etc/services */
-	if (strcmp(name, "nfs") == 0) {
-		*port = 2049;
-		*proto = PROTO_UNDEF;
-		return 1;
-	}
-#endif
 	return 0;
 }
 
@@ -470,40 +436,33 @@ pcap_nametoport(const char *name, int *port, int *proto)
 int
 pcap_nametoportrange(const char *name, int *port1, int *port2, int *proto)
 {
-	u_int p1, p2;
 	char *off, *cpy;
 	int save_proto;
 
-	if (sscanf(name, "%d-%d", &p1, &p2) != 2) {
-		if ((cpy = strdup(name)) == NULL)
-			return 0;
+	if ((cpy = strdup(name)) == NULL)
+		return 0;
 
-		if ((off = strchr(cpy, '-')) == NULL) {
-			free(cpy);
-			return 0;
-		}
-
-		*off = '\0';
-
-		if (pcap_nametoport(cpy, port1, proto) == 0) {
-			free(cpy);
-			return 0;
-		}
-		save_proto = *proto;
-
-		if (pcap_nametoport(off + 1, port2, proto) == 0) {
-			free(cpy);
-			return 0;
-		}
+	if ((off = strchr(cpy, '-')) == NULL) {
 		free(cpy);
-
-		if (*proto != save_proto)
-			*proto = PROTO_UNDEF;
-	} else {
-		*port1 = p1;
-		*port2 = p2;
-		*proto = PROTO_UNDEF;
+		return 0;
 	}
+
+	*off = '\0';
+
+	if (pcap_nametoport(cpy, port1, proto) == 0) {
+		free(cpy);
+		return 0;
+	}
+	save_proto = *proto;
+
+	if (pcap_nametoport(off + 1, port2, proto) == 0) {
+		free(cpy);
+		return 0;
+	}
+	free(cpy);
+
+	if (*proto != save_proto)
+		*proto = PROTO_UNDEF;
 
 	return 1;
 }
@@ -516,52 +475,67 @@ int
 pcap_nametoproto(const char *str)
 {
 	struct protoent *p;
-  #if defined(HAVE_LINUX_GETNETBYNAME_R)
+  #if defined(HAVE_LINUX_GETPROTOBYNAME_R)
 	/*
 	 * We have Linux's reentrant getprotobyname_r().
 	 */
 	struct protoent result_buf;
-	char buf[1024];	/* arbitrary size */
+	char buf[1024];	// "...1024 bytes should be sufficient for most applications."
 	int err;
 
 	err = getprotobyname_r(str, &result_buf, buf, sizeof buf, &p);
+	/*
+	 * As far as GNU libc implementation goes, an "error" means the
+	 * protocol database could not be searched, which could mean err ==
+	 * ERANGE if the buffer is too small or ENOENT if the protocols(5)
+	 * file does not exist (the man page does not document the latter
+	 * eventuality).  If the database has been searched normally and the
+	 * requested protocol name was not found, it is not an "error" and
+	 * err == 0.
+	 *
+	 * This notwithstanding, p == NULL iff a record was not found for any
+	 * reason (whether an "error" or not), which is the same semantics as
+	 * in every other HAVE_xxxxx branch of this block.  The final check
+	 * after the block will catch that if necessary.
+	 */
 	if (err != 0) {
 		/*
 		 * XXX - dynamically allocate the buffer, and make it
 		 * bigger if we get ERANGE back?
 		 */
-		return 0;
+		return PROTO_UNDEF;
 	}
-  #elif defined(HAVE_SOLARIS_IRIX_GETNETBYNAME_R)
+  #elif defined(HAVE_SOLARIS_GETPROTOBYNAME_R)
 	/*
-	 * We have Solaris's and IRIX's reentrant getprotobyname_r().
+	 * We have Solaris's reentrant getprotobyname_r().
 	 */
 	struct protoent result_buf;
-	char buf[1024];	/* arbitrary size */
+	char buf[1024];	// "...must be at least 1024 bytes."
 
 	p = getprotobyname_r(str, &result_buf, buf, (int)sizeof buf);
-  #elif defined(HAVE_AIX_GETNETBYNAME_R)
+  #elif defined(HAVE_AIX_GETPROTOBYNAME_R)
 	/*
 	 * We have AIX's reentrant getprotobyname_r().
 	 */
 	struct protoent result_buf;
-	struct protoent_data proto_data;
+	// "The structure must be zero-filled before it is used..." (OpenBSD).
+	struct protoent_data proto_data = {0};
 
 	if (getprotobyname_r(str, &result_buf, &proto_data) == -1)
 		p = NULL;
 	else
 		p = &result_buf;
   #else
- 	/*
- 	 * We don't have any getprotobyname_r(); either we have a
- 	 * getprotobyname() that uses thread-specific data, in which
- 	 * case we're thread-safe (sufficiently recent FreeBSD,
- 	 * sufficiently recent Darwin-based OS, sufficiently recent
- 	 * HP-UX, sufficiently recent Tru64 UNIX, Windows), or we have
+	/*
+	 * We don't have any getprotobyname_r(); either we have a
+	 * getprotobyname() that uses thread-specific data, in which
+	 * case we're thread-safe (sufficiently recent FreeBSD,
+	 * sufficiently recent Darwin-based OS, sufficiently recent
+	 * HP-UX, Windows), or we have
 	 * the traditional getprotobyname() (everything else, including
- 	 * current NetBSD and OpenBSD), in which case we're not
- 	 * thread-safe.
- 	 */
+	 * current NetBSD and OpenBSD), in which case we're not
+	 * thread-safe.
+	 */
 	p = getprotobyname(str);
   #endif
 	if (p != 0)
@@ -595,29 +569,33 @@ PCAP_API_DEF struct eproto eproto_db[] = {
 	{ "atalk", ETHERTYPE_ATALK },
 	{ "decnet", ETHERTYPE_DN },
 	{ "ip", ETHERTYPE_IP },
-#ifdef INET6
 	{ "ip6", ETHERTYPE_IPV6 },
-#endif
 	{ "lat", ETHERTYPE_LAT },
+	{ "lldp", ETHERTYPE_LLDP },
 	{ "loopback", ETHERTYPE_LOOPBACK },
 	{ "mopdl", ETHERTYPE_MOPDL },
 	{ "moprc", ETHERTYPE_MOPRC },
 	{ "rarp", ETHERTYPE_REVARP },
 	{ "sca", ETHERTYPE_SCA },
-	{ (char *)0, 0 }
+	{ "slow", ETHERTYPE_SLOW },
+	{ NULL, 0 }
 };
 
-int
-pcap_nametoeproto(const char *s)
+static int
+proto_or_undef(const struct eproto *p, const char *s)
 {
-	struct eproto *p = eproto_db;
-
-	while (p->s != 0) {
+	while (p->s) {
 		if (strcmp(p->s, s) == 0)
 			return p->p;
 		p += 1;
 	}
 	return PROTO_UNDEF;
+}
+
+int
+pcap_nametoeproto(const char *s)
+{
+	return proto_or_undef(eproto_db, s);
 }
 
 #include "llc.h"
@@ -628,25 +606,18 @@ static struct eproto llc_db[] = {
 	{ "stp", LLCSAP_8021D },
 	{ "ipx", LLCSAP_IPX },
 	{ "netbeui", LLCSAP_NETBEUI },
-	{ (char *)0, 0 }
+	{ NULL, 0 }
 };
 
 int
 pcap_nametollc(const char *s)
 {
-	struct eproto *p = llc_db;
-
-	while (p->s != 0) {
-		if (strcmp(p->s, s) == 0)
-			return p->p;
-		p += 1;
-	}
-	return PROTO_UNDEF;
+	return proto_or_undef(llc_db, s);
 }
 
 /* Hex digit to 8-bit unsigned integer. */
-static inline u_char
-xdtoi(u_char c)
+u_char
+pcapint_xdtoi(const u_char c)
 {
 	if (c >= '0' && c <= '9')
 		return (u_char)(c - '0');
@@ -657,7 +628,7 @@ xdtoi(u_char c)
 }
 
 int
-__pcap_atoin(const char *s, bpf_u_int32 *addr)
+pcapint_atoin(const char *s, bpf_u_int32 *addr)
 {
 	u_int n;
 	int len;
@@ -685,73 +656,532 @@ __pcap_atoin(const char *s, bpf_u_int32 *addr)
 	/* NOTREACHED */
 }
 
+/*
+ * Iff 's' is a string that is a well-formed DECnet address (aa.nnnn), parse
+ * the address into 'addr' and return 1, otherwise return 0.
+ *
+ * A binary DECnet address consists of a 6-bit area number and a 10-bit node
+ * number; neither area 0 nor node 0 are valid for normal addressing purposes,
+ * but either can potentially appear on the wire.
+ */
 int
-__pcap_atodn(const char *s, bpf_u_int32 *addr)
+pcapint_atodn(const char *s, uint16_t *addr)
 {
 #define AREASHIFT 10
 #define AREAMASK 0176000
 #define NODEMASK 01777
 
-	u_int node, area;
+	/* Initialize to squelch a compiler warning only. */
+	u_int node = 0, area = 0;
+	/*
+	 *               +--+             +--+
+	 *               |  |             |  |
+	 *               v  |             v  |
+	 * --> START --> AREA --> DOT --> NODE -->
+	 *       |          |     |        |
+	 *       |          v     v        |
+	 *       +--------> INVALID <------+
+	 */
+	enum {
+		START,
+		AREA,
+		DOT,
+		NODE,
+		INVALID
+	} fsm_state = START;
 
-	if (sscanf(s, "%d.%d", &area, &node) != 2)
-		return(0);
+	while (*s) {
+		switch (fsm_state) {
+		case START:
+			if (PCAP_ISDIGIT(*s)) {
+				area = *s - '0';
+				fsm_state = AREA;
+				break;
+			}
+			fsm_state = INVALID;
+			break;
+		case AREA:
+			if (*s == '.') {
+				fsm_state = DOT;
+				break;
+			}
+			if (PCAP_ISDIGIT(*s)) {
+				area = area * 10 + *s - '0';
+				if (area <= AREAMASK >> AREASHIFT)
+					break;
+			}
+			fsm_state = INVALID;
+			break;
+		case DOT:
+			if (PCAP_ISDIGIT(*s)) {
+				node = *s - '0';
+				fsm_state = NODE;
+				break;
+			}
+			fsm_state = INVALID;
+			break;
+		case NODE:
+			if (PCAP_ISDIGIT(*s)) {
+				node = node * 10 + *s - '0';
+				if (node <= NODEMASK)
+					break;
+			}
+			fsm_state = INVALID;
+			break;
+		case INVALID:
+			return 0;
+		} /* switch */
+		s++;
+	} /* while */
+	/*
+	 * This condition is false if the string comes from the lexer, but
+	 * let's not depend on that.
+	 */
+	if (fsm_state != NODE)
+		return 0;
 
-	*addr = (area << AREASHIFT) & AREAMASK;
-	*addr |= (node & NODEMASK);
-
-	return(32);
+	// Both 'area' and 'node' have been verified to be in range.
+	*addr = (uint16_t)(area << AREASHIFT | node);
+	return 1;
 }
 
 /*
- * Convert 's', which can have the one of the forms:
+ * libpcap ARCnet address format is "^\$[0-9a-fA-F]{1,2}$" in regexp syntax.
+ * Iff the given string is a well-formed ARCnet address, parse the string,
+ * store the 8-bit unsigned value into the provided integer and return 1.
+ * Otherwise return 0.
  *
- *	"xx:xx:xx:xx:xx:xx"
- *	"xx.xx.xx.xx.xx.xx"
- *	"xx-xx-xx-xx-xx-xx"
- *	"xxxx.xxxx.xxxx"
- *	"xxxxxxxxxxxx"
+ *  --> START -- $ --> DOLLAR -- [0-9a-fA-F] --> HEX1 -- \0 -->-+
+ *        |              |                        |             |
+ *       [.]            [.]                  [0-9a-fA-F]        |
+ *        |              |                        |             |
+ *        v              v                        v             v
+ *    (invalid) <--------+-<---------------[.]-- HEX2 -- \0 -->-+--> (valid)
+ */
+int
+pcapint_atoan(const char *s, uint8_t *addr)
+{
+	enum {
+		START,
+		DOLLAR,
+		HEX1,
+		HEX2,
+	} fsm_state = START;
+	uint8_t tmp = 0;
+
+	while (*s) {
+		switch (fsm_state) {
+		case START:
+			if (*s != '$')
+				goto invalid;
+			fsm_state = DOLLAR;
+			break;
+		case DOLLAR:
+			if (! PCAP_ISXDIGIT(*s))
+				goto invalid;
+			tmp = pcapint_xdtoi(*s);
+			fsm_state = HEX1;
+			break;
+		case HEX1:
+			if (! PCAP_ISXDIGIT(*s))
+				goto invalid;
+			tmp <<= 4;
+			tmp |= pcapint_xdtoi(*s);
+			fsm_state = HEX2;
+			break;
+		case HEX2:
+			goto invalid;
+		} // switch
+		s++;
+	} // while
+	if (fsm_state == HEX1 || fsm_state == HEX2) {
+		*addr = tmp;
+		return 1;
+	}
+
+invalid:
+	return 0;
+}
+
+// Man page: "xxxxxxxxxxxx", regexp: "^[0-9a-fA-F]{12}$".
+static u_char
+pcapint_atomac48_xxxxxxxxxxxx(const char *s, uint8_t *addr)
+{
+	if (strlen(s) == 12 &&
+	    PCAP_ISXDIGIT(s[0]) &&
+	    PCAP_ISXDIGIT(s[1]) &&
+	    PCAP_ISXDIGIT(s[2]) &&
+	    PCAP_ISXDIGIT(s[3]) &&
+	    PCAP_ISXDIGIT(s[4]) &&
+	    PCAP_ISXDIGIT(s[5]) &&
+	    PCAP_ISXDIGIT(s[6]) &&
+	    PCAP_ISXDIGIT(s[7]) &&
+	    PCAP_ISXDIGIT(s[8]) &&
+	    PCAP_ISXDIGIT(s[9]) &&
+	    PCAP_ISXDIGIT(s[10]) &&
+	    PCAP_ISXDIGIT(s[11])) {
+		addr[0] = pcapint_xdtoi(s[0]) << 4 | pcapint_xdtoi(s[1]);
+		addr[1] = pcapint_xdtoi(s[2]) << 4 | pcapint_xdtoi(s[3]);
+		addr[2] = pcapint_xdtoi(s[4]) << 4 | pcapint_xdtoi(s[5]);
+		addr[3] = pcapint_xdtoi(s[6]) << 4 | pcapint_xdtoi(s[7]);
+		addr[4] = pcapint_xdtoi(s[8]) << 4 | pcapint_xdtoi(s[9]);
+		addr[5] = pcapint_xdtoi(s[10]) << 4 | pcapint_xdtoi(s[11]);
+		return 1;
+	}
+	return 0;
+}
+
+// Man page: "xxxx.xxxx.xxxx", regexp: "^[0-9a-fA-F]{4}(\.[0-9a-fA-F]{4}){2}$".
+static u_char
+pcapint_atomac48_xxxx_3_times(const char *s, uint8_t *addr)
+{
+	const char sep = '.';
+	if (strlen(s) == 14 &&
+	    PCAP_ISXDIGIT(s[0]) &&
+	    PCAP_ISXDIGIT(s[1]) &&
+	    PCAP_ISXDIGIT(s[2]) &&
+	    PCAP_ISXDIGIT(s[3]) &&
+	    s[4] == sep &&
+	    PCAP_ISXDIGIT(s[5]) &&
+	    PCAP_ISXDIGIT(s[6]) &&
+	    PCAP_ISXDIGIT(s[7]) &&
+	    PCAP_ISXDIGIT(s[8]) &&
+	    s[9] == sep &&
+	    PCAP_ISXDIGIT(s[10]) &&
+	    PCAP_ISXDIGIT(s[11]) &&
+	    PCAP_ISXDIGIT(s[12]) &&
+	    PCAP_ISXDIGIT(s[13])) {
+		addr[0] = pcapint_xdtoi(s[0]) << 4 | pcapint_xdtoi(s[1]);
+		addr[1] = pcapint_xdtoi(s[2]) << 4 | pcapint_xdtoi(s[3]);
+		addr[2] = pcapint_xdtoi(s[5]) << 4 | pcapint_xdtoi(s[6]);
+		addr[3] = pcapint_xdtoi(s[7]) << 4 | pcapint_xdtoi(s[8]);
+		addr[4] = pcapint_xdtoi(s[10]) << 4 | pcapint_xdtoi(s[11]);
+		addr[5] = pcapint_xdtoi(s[12]) << 4 | pcapint_xdtoi(s[13]);
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * Man page: "xx:xx:xx:xx:xx:xx", regexp: "^[0-9a-fA-F]{1,2}(:[0-9a-fA-F]{1,2}){5}$".
+ * Man page: "xx-xx-xx-xx-xx-xx", regexp: "^[0-9a-fA-F]{1,2}(-[0-9a-fA-F]{1,2}){5}$".
+ * Man page: "xx.xx.xx.xx.xx.xx", regexp: "^[0-9a-fA-F]{1,2}(\.[0-9a-fA-F]{1,2}){5}$".
+ * (Any "xx" above can be "x", which is equivalent to "0x".)
  *
- * (or various mixes of ':', '.', and '-') into a new
- * ethernet address.  Assumes 's' is well formed.
+ * An equivalent (and parametrisable for EUI-64) FSM could be implemented using
+ * a smaller graph, but that graph would be neither acyclic nor planar nor
+ * trivial to verify.
+ *
+ *                |
+ *    [.]         v
+ * +<---------- START
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE0_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE0_XX          | [:\.-]
+ * |              |              |
+ * |              | [:\.-]       |
+ * |  [.]         v              |
+ * +<----- BYTE0_SEP_BYTE1 <-----+
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE1_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE1_XX          | <sep>
+ * |              |              |
+ * |              | <sep>        |
+ * |  [.]         v              |
+ * +<----- BYTE1_SEP_BYTE2 <-----+
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE2_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE2_XX          | <sep>
+ * |              |              |
+ * |              | <sep>        |
+ * |  [.]         v              |
+ * +<----- BYTE2_SEP_BYTE3 <-----+
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE3_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE3_XX          | <sep>
+ * |              |              |
+ * |              | <sep>        |
+ * |  [.]         v              |
+ * +<----- BYTE3_SEP_BYTE4 <-----+
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE4_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE4_XX          | <sep>
+ * |              |              |
+ * |              | <sep>        |
+ * |  [.]         v              |
+ * +<----- BYTE4_SEP_BYTE5 <-----+
+ * |              |
+ * |              | [0-9a-fA-F]
+ * |  [.]         v
+ * +<--------- BYTE5_X ----------+
+ * |              |              |
+ * |              | [0-9a-fA-F]  |
+ * |  [.]         v              |
+ * +<--------- BYTE5_XX          | \0
+ * |              |              |
+ * |              | \0           |
+ * |              |              v
+ * +--> (reject)  +---------> (accept)
+ *
+ */
+static u_char
+pcapint_atomac48_x_xx_6_times(const char *s, uint8_t *addr)
+{
+	enum {
+		START,
+		BYTE0_X,
+		BYTE0_XX,
+		BYTE0_SEP_BYTE1,
+		BYTE1_X,
+		BYTE1_XX,
+		BYTE1_SEP_BYTE2,
+		BYTE2_X,
+		BYTE2_XX,
+		BYTE2_SEP_BYTE3,
+		BYTE3_X,
+		BYTE3_XX,
+		BYTE3_SEP_BYTE4,
+		BYTE4_X,
+		BYTE4_XX,
+		BYTE4_SEP_BYTE5,
+		BYTE5_X,
+		BYTE5_XX,
+	} fsm_state = START;
+	uint8_t buf[6];
+	const char *seplist = ":.-";
+	/*
+	 * XXX - the state diagram indicates that we cannot get to states
+	 * BYTEn_X or BYTEn_XX, for n > 0, without first going through
+	 * states BYTE0_X or BYTE0_XX, but at least some versions of
+	 * MSVC complain that sep may be used uninitialized, so we
+	 * initialize it here.
+	 */
+	char sep = '\0';
+
+	while (*s) {
+		switch (fsm_state) {
+		case START:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[0] = pcapint_xdtoi(*s);
+				fsm_state = BYTE0_X;
+				break;
+			}
+			goto reject;
+		case BYTE0_X:
+			if (strchr(seplist, *s)) {
+				sep = *s;
+				fsm_state = BYTE0_SEP_BYTE1;
+				break;
+			}
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[0] = buf[0] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE0_XX;
+				break;
+			}
+			goto reject;
+		case BYTE0_XX:
+			if (strchr(seplist, *s)) {
+				sep = *s;
+				fsm_state = BYTE0_SEP_BYTE1;
+				break;
+			}
+			goto reject;
+		case BYTE0_SEP_BYTE1:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[1] = pcapint_xdtoi(*s);
+				fsm_state = BYTE1_X;
+				break;
+			}
+			goto reject;
+		case BYTE1_X:
+			if (*s == sep) {
+				fsm_state = BYTE1_SEP_BYTE2;
+				break;
+			}
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[1] = buf[1] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE1_XX;
+				break;
+			}
+			goto reject;
+		case BYTE1_XX:
+			if (*s == sep) {
+				fsm_state = BYTE1_SEP_BYTE2;
+				break;
+			}
+			goto reject;
+		case BYTE1_SEP_BYTE2:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[2] = pcapint_xdtoi(*s);
+				fsm_state = BYTE2_X;
+				break;
+			}
+			goto reject;
+		case BYTE2_X:
+			if (*s == sep) {
+				fsm_state = BYTE2_SEP_BYTE3;
+				break;
+			}
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[2] = buf[2] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE2_XX;
+				break;
+			}
+			goto reject;
+		case BYTE2_XX:
+			if (*s == sep) {
+				fsm_state = BYTE2_SEP_BYTE3;
+				break;
+			}
+			goto reject;
+		case BYTE2_SEP_BYTE3:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[3] = pcapint_xdtoi(*s);
+				fsm_state = BYTE3_X;
+				break;
+			}
+			goto reject;
+		case BYTE3_X:
+			if (*s == sep) {
+				fsm_state = BYTE3_SEP_BYTE4;
+				break;
+			}
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[3] = buf[3] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE3_XX;
+				break;
+			}
+			goto reject;
+		case BYTE3_XX:
+			if (*s == sep) {
+				fsm_state = BYTE3_SEP_BYTE4;
+				break;
+			}
+			goto reject;
+		case BYTE3_SEP_BYTE4:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[4] = pcapint_xdtoi(*s);
+				fsm_state = BYTE4_X;
+				break;
+			}
+			goto reject;
+		case BYTE4_X:
+			if (*s == sep) {
+				fsm_state = BYTE4_SEP_BYTE5;
+				break;
+			}
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[4] = buf[4] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE4_XX;
+				break;
+			}
+			goto reject;
+		case BYTE4_XX:
+			if (*s == sep) {
+				fsm_state = BYTE4_SEP_BYTE5;
+				break;
+			}
+			goto reject;
+		case BYTE4_SEP_BYTE5:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[5] = pcapint_xdtoi(*s);
+				fsm_state = BYTE5_X;
+				break;
+			}
+			goto reject;
+		case BYTE5_X:
+			if (PCAP_ISXDIGIT(*s)) {
+				buf[5] = buf[5] << 4 | pcapint_xdtoi(*s);
+				fsm_state = BYTE5_XX;
+				break;
+			}
+			goto reject;
+		case BYTE5_XX:
+			goto reject;
+		} // switch
+		s++;
+	} // while
+
+	if (fsm_state == BYTE5_X || fsm_state == BYTE5_XX) {
+		// accept
+		memcpy(addr, buf, sizeof(buf));
+		return 1;
+	}
+
+reject:
+	return 0;
+}
+
+// The 'addr' argument must point to an array of at least 6 elements.
+int
+pcapint_atomac48(const char *s, uint8_t *addr)
+{
+	return s && (
+	    pcapint_atomac48_xxxxxxxxxxxx(s, addr) ||
+	    pcapint_atomac48_xxxx_3_times(s, addr) ||
+	    pcapint_atomac48_x_xx_6_times(s, addr)
+	);
+}
+
+/*
+ * If 's' is a MAC-48 address in one of the forms documented in pcap-filter(7)
+ * for "ether host", return a pointer to an allocated buffer with the binary
+ * value of the address.  Return NULL on any error.
  */
 u_char *
 pcap_ether_aton(const char *s)
 {
-	register u_char *ep, *e;
-	register u_char d;
-
-	e = ep = (u_char *)malloc(6);
-	if (e == NULL)
+	uint8_t tmp[6];
+	if (! pcapint_atomac48(s, tmp))
 		return (NULL);
 
-	while (*s) {
-		if (*s == ':' || *s == '.' || *s == '-')
-			s += 1;
-		d = xdtoi(*s++);
-		if (PCAP_ISXDIGIT(*s)) {
-			d <<= 4;
-			d |= xdtoi(*s++);
-		}
-		*ep++ = d;
-	}
-
+	u_char *e = malloc(6);
+	if (e == NULL)
+		return (NULL);
+	memcpy(e, tmp, sizeof(tmp));
 	return (e);
 }
 
 #ifndef HAVE_ETHER_HOSTTON
 /*
  * Roll our own.
- * XXX - not thread-safe, because pcap_next_etherent() isn't thread-
- * safe!  Needs a mutex or a thread-safe pcap_next_etherent().
+ *
+ * This should be thread-safe, as we define the static variables
+ * we use to be thread-local, and as pcap_next_etherent() does so
+ * as well.
  */
 u_char *
 pcap_ether_hostton(const char *name)
 {
-	register struct pcap_etherent *ep;
-	register u_char *ap;
-	static FILE *fp = NULL;
-	static int init = 0;
+	struct pcap_etherent *ep;
+	u_char *ap;
+	static thread_local FILE *fp = NULL;
+	static thread_local int init = 0;
 
 	if (!init) {
 		fp = fopen(PCAP_ETHERS_FILE, "r");
@@ -783,14 +1213,14 @@ pcap_ether_hostton(const char *name)
 u_char *
 pcap_ether_hostton(const char *name)
 {
-	register u_char *ap;
+	u_char *ap;
 	u_char a[6];
 	char namebuf[1024];
 
 	/*
 	 * In AIX 7.1 and 7.2: int ether_hostton(char *, struct ether_addr *);
 	 */
-	pcap_strlcpy(namebuf, name, sizeof(namebuf));
+	pcapint_strlcpy(namebuf, name, sizeof(namebuf));
 	ap = NULL;
 	if (ether_hostton(namebuf, (struct ether_addr *)a) == 0) {
 		ap = (u_char *)malloc(6);
@@ -800,26 +1230,3 @@ pcap_ether_hostton(const char *name)
 	return (ap);
 }
 #endif
-
-/*
- * XXX - not guaranteed to be thread-safe!
- */
-int
-#ifdef	DECNETLIB
-__pcap_nametodnaddr(const char *name, u_short *res)
-{
-	struct nodeent *getnodebyname();
-	struct nodeent *nep;
-
-	nep = getnodebyname(name);
-	if (nep == ((struct nodeent *)0))
-		return(0);
-
-	memcpy((char *)res, (char *)nep->n_addr, sizeof(unsigned short));
-	return(1);
-#else
-__pcap_nametodnaddr(const char *name _U_, u_short *res _U_)
-{
-	return(0);
-#endif
-}

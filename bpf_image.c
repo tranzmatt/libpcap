@@ -19,9 +19,7 @@
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <pcap-types.h>
 
@@ -43,6 +41,8 @@
 #endif
 
 #include "pcap-int.h"
+
+#include "thread-local.h"
 
 #ifdef HAVE_OS_PROTO_H
 #include "os-proto.h"
@@ -130,7 +130,7 @@ char *
 bpf_image(const struct bpf_insn *p, int n)
 {
 	const char *op;
-	static char image[256];
+	static thread_local char image[256];
 	char operand_buf[64];
 	const char *operand;
 
@@ -173,6 +173,11 @@ bpf_image(const struct bpf_insn *p, int n)
 
 	case BPF_LD|BPF_W|BPF_LEN:
 		op = "ld";
+		operand = "#pktlen";
+		break;
+
+	case BPF_LDX|BPF_W|BPF_LEN:
+		op = "ldx";
 		operand = "#pktlen";
 		break;
 
@@ -415,6 +420,10 @@ bpf_image(const struct bpf_insn *p, int n)
 		(void)snprintf(image, sizeof image,
 			      "(%03d) %-8s %-16s jt %d\tjf %d",
 			      n, op, operand, n + 1 + p->jt, n + 1 + p->jf);
+	} else if (! *operand) {
+		(void)snprintf(image, sizeof image,
+			      "(%03d) %-s",
+			      n, op);
 	} else {
 		(void)snprintf(image, sizeof image,
 			      "(%03d) %-8s %s",

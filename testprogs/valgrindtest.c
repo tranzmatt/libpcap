@@ -51,9 +51,7 @@ static const char copyright[] _U_ =
 The Regents of the University of California.  All rights reserved.\n";
 #endif
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,7 +70,7 @@ The Regents of the University of California.  All rights reserved.\n";
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || defined(_AIX) || defined(sun)
 /* OS with BPF - use BPF */
 #define USE_BPF
-#elif defined(linux)
+#elif defined(__linux__)
 /* Linux - use socket filters */
 #define USE_SOCKET_FILTERS
 #else
@@ -139,8 +137,8 @@ static void warning(const char *, ...) PCAP_PRINTFLIKE(1, 2);
 static char *
 read_infile(char *fname)
 {
-	register int i, fd, cc;
-	register char *cp;
+	int i, fd, cc;
+	char *cp;
 	struct stat buf;
 
 	fd = open(fname, O_RDONLY|O_BINARY);
@@ -221,10 +219,10 @@ warning(const char *fmt, ...)
  * Copy arg vector into a new buffer, concatenating arguments with spaces.
  */
 static char *
-copy_argv(register char **argv)
+copy_argv(char **argv)
 {
-	register char **p;
-	register size_t len = 0;
+	char **p;
+	size_t len = 0;
 	char *buf;
 	char *src, *dst;
 

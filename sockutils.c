@@ -30,9 +30,7 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 /*
  * \file sockutils.c
@@ -71,8 +69,6 @@
    */
   #define WINSOCK_MAJOR_VERSION 2
   #define WINSOCK_MINOR_VERSION 2
-
-  static int sockcount = 0;	/*!< Variable that allows calling the WSAStartup() only one time */
 #endif
 
 /* Some minor differences between UNIX and Win32 */
@@ -163,10 +159,10 @@ void sock_vfmterrmsg(char *errbuf, size_t errbuflen, int errcode,
 		return;
 
 #ifdef _WIN32
-	pcap_vfmt_errmsg_for_win32_err(errbuf, errbuflen, errcode,
+	pcapint_vfmt_errmsg_for_win32_err(errbuf, errbuflen, errcode,
 	    fmt, ap);
 #else
-	pcap_vfmt_errmsg_for_errno(errbuf, errbuflen, errcode,
+	pcapint_vfmt_errmsg_for_errno(errbuf, errbuflen, errcode,
 	    fmt, ap);
 #endif
 }
@@ -199,7 +195,7 @@ void sock_geterrmsg(char *errbuf, size_t errbuflen, const char *fmt, ...)
  * These are sorted by how likely they are to be the "underlying" problem,
  * so that lower-rated errors for a given address in a given family
  * should not overwrite higher-rated errors for another address in that
- * family, and higher-rated errors should overwrit elower-rated errors.
+ * family, and higher-rated errors should overwrite lower-rated errors.
  */
 typedef enum {
 	SOCK_CONNERR,		/* connection error */
@@ -230,7 +226,7 @@ static sock_errtype sock_geterrtype(int errcode)
 		 * and we're trying the wrong address family.
 		 *
 		 * These overwrite all other errors, as they indicate
-		 * that, even if somethng else went wrong in another
+		 * that, even if something else went wrong in another
 		 * attempt, this probably wouldn't work even if the
 		 * other problems were fixed.
 		 */
@@ -304,12 +300,11 @@ static sock_errtype sock_geterrtype(int errcode)
 }
 
 /*
- * \brief This function initializes the socket mechanism if it hasn't
- * already been initialized or reinitializes it after it has been
- * cleaned up.
+ * \brief This function initializes the socket mechanism, if
+ * necessary.
  *
  * On UN*Xes, it doesn't need to do anything; on Windows, it needs to
- * initialize Winsock.
+ * call WSAStartup().
  *
  * \param errbuf: a pointer to an user-allocated buffer that will contain
  * the complete error message. This buffer has to be at least 'errbuflen'
@@ -325,23 +320,20 @@ static sock_errtype sock_geterrtype(int errcode)
 #ifdef _WIN32
 int sock_init(char *errbuf, int errbuflen)
 {
-	if (sockcount == 0)
+	int errcode;
+	WSADATA wsaData;			/* helper variable needed to initialize Winsock */
+
+	errcode = WSAStartup(MAKEWORD(WINSOCK_MAJOR_VERSION,
+	    WINSOCK_MINOR_VERSION), &wsaData);
+	if (errcode != 0)
 	{
-		WSADATA wsaData;			/* helper variable needed to initialize Winsock */
-
-		if (WSAStartup(MAKEWORD(WINSOCK_MAJOR_VERSION,
-		    WINSOCK_MINOR_VERSION), &wsaData) != 0)
-		{
-			if (errbuf)
-				snprintf(errbuf, errbuflen, "Failed to initialize Winsock\n");
-
-			WSACleanup();
-
-			return -1;
+		if (errbuf) {
+			sock_fmterrmsg(errbuf, errbuflen, errcode,
+			    "WSAStartup() failed");
 		}
+		return -1;
 	}
 
-	sockcount++;
 	return 0;
 }
 #else
@@ -355,8 +347,7 @@ int sock_init(char *errbuf _U_, int errbuflen _U_)
 #endif
 
 /*
- * \brief This function cleans up the socket mechanism if we have no
- * sockets left open.
+ * \brief This function cleans up after a sock_init().
  *
  * On UN*Xes, it doesn't need to do anything; on Windows, it needs
  * to clean up Winsock.
@@ -366,10 +357,7 @@ int sock_init(char *errbuf _U_, int errbuflen _U_)
 void sock_cleanup(void)
 {
 #ifdef _WIN32
-	sockcount--;
-
-	if (sockcount == 0)
-		WSACleanup();
+	WSACleanup();
 #endif
 }
 
@@ -432,10 +420,10 @@ static int compare_addrs_to_try_by_status(const void *a, const void *b)
 	return addr_a->errtype - addr_b->errtype;
 }
 
-static SOCKET sock_create_socket(struct addrinfo *addrinfo, char *errbuf,
+static PCAP_SOCKET sock_create_socket(struct addrinfo *addrinfo, char *errbuf,
     int errbuflen)
 {
-	SOCKET sock;
+	PCAP_SOCKET sock;
 #ifdef SO_NOSIGPIPE
 	int on = 1;
 #endif
@@ -501,9 +489,10 @@ static SOCKET sock_create_socket(struct addrinfo *addrinfo, char *errbuf,
  * if everything is fine, INVALID_SOCKET if some errors occurred. The error message is returned
  * in the 'errbuf' variable.
  */
-SOCKET sock_open(const char *host, struct addrinfo *addrinfo, int server, int nconn, char *errbuf, int errbuflen)
+PCAP_SOCKET sock_open(const char *host, struct addrinfo *addrinfo,
+    int server, int nconn, char *errbuf, int errbuflen)
 {
-	SOCKET sock;
+	PCAP_SOCKET sock;
 
 	/* This is a server socket */
 	if (server)
@@ -872,7 +861,7 @@ SOCKET sock_open(const char *host, struct addrinfo *addrinfo, int server, int nc
  * \return '0' if everything is fine, '-1' if some errors occurred. The error message is returned
  * in the 'errbuf' variable.
  */
-int sock_close(SOCKET sock, char *errbuf, int errbuflen)
+int sock_close(PCAP_SOCKET sock, char *errbuf, int errbuflen)
 {
 	/*
 	 * SHUT_WR: subsequent calls to the send function are disallowed.
@@ -881,7 +870,7 @@ int sock_close(SOCKET sock, char *errbuf, int errbuflen)
 	 */
 	if (shutdown(sock, SHUT_WR))
 	{
-		sock_geterrmsg(errbuf, errbuflen, "shutdown() feiled");
+		sock_geterrmsg(errbuf, errbuflen, "shutdown() failed");
 		/* close the socket anyway */
 		closesocket(sock);
 		return -1;
@@ -1004,7 +993,7 @@ get_gai_errstring(char *errbuf, int errbuflen, const char *prefix, int err,
 			/*
 			 * Assumed to be UN*X.
 			 */
-			pcap_fmt_errmsg_for_errno(errbuf, errbuflen, errno,
+			pcapint_fmt_errmsg_for_errno(errbuf, errbuflen, errno,
 			    "%sAn error occurred when looking up %s",
 			    prefix, hostport);
 			break;
@@ -1043,7 +1032,7 @@ get_gai_errstring(char *errbuf, int errbuflen, const char *prefix, int err,
 }
 
 /*
- * \brief Checks that the address, port and flags given are valids and it returns an 'addrinfo' structure.
+ * \brief Checks that the address, port and flags given are valid and it returns an 'addrinfo' structure.
  *
  * This function basically calls the getaddrinfo() calls, and it performs a set of sanity checks
  * to control that everything is fine (e.g. a TCP socket cannot have a mcast address, and such).
@@ -1069,20 +1058,21 @@ get_gai_errstring(char *errbuf, int errbuflen, const char *prefix, int err,
  * \param errbuflen: length of the buffer that will contains the error. The error message cannot be
  * larger than 'errbuflen - 1' because the last char is reserved for the string terminator.
  *
- * \return '0' if everything is fine, '-1' if some errors occurred. The error message is returned
- * in the 'errbuf' variable. The addrinfo variable that has to be used in the following sockets calls is
- * returned into the addrinfo parameter.
+ * \return a pointer to the first element in a list of addrinfo structures
+ * if everything is fine, NULL if some errors occurred. The error message
+ * is returned in the 'errbuf' variable.
  *
- * \warning The 'addrinfo' variable has to be deleted by the programmer by calling freeaddrinfo() when
- * it is no longer needed.
+ * \warning The list of addrinfo structures returned has to be deleted by
+ * the programmer by calling freeaddrinfo() when it is no longer needed.
  *
  * \warning This function requires the 'hints' variable as parameter. The semantic of this variable is the same
  * of the one of the corresponding variable used into the standard getaddrinfo() socket function. We suggest
  * the programmer to look at that function in order to set the 'hints' variable appropriately.
  */
-int sock_initaddress(const char *host, const char *port,
-    struct addrinfo *hints, struct addrinfo **addrinfo, char *errbuf, int errbuflen)
+struct addrinfo *sock_initaddress(const char *host, const char *port,
+    struct addrinfo *hints, char *errbuf, int errbuflen)
 {
+	struct addrinfo *addrinfo;
 	int retval;
 
 	/*
@@ -1094,9 +1084,13 @@ int sock_initaddress(const char *host, const char *port,
 	 * as those messages won't talk about a problem with the port if
 	 * no port was specified.
 	 */
-	retval = getaddrinfo(host, port == NULL ? "0" : port, hints, addrinfo);
+	retval = getaddrinfo(host, port == NULL ? "0" : port, hints, &addrinfo);
 	if (retval != 0)
 	{
+		/*
+		 * That call failed.
+		 * Determine whether the problem is that the host is bad.
+		 */
 		if (errbuf)
 		{
 			if (host != NULL && port != NULL) {
@@ -1108,7 +1102,7 @@ int sock_initaddress(const char *host, const char *port,
 				int try_retval;
 
 				try_retval = getaddrinfo(host, NULL, hints,
-				    addrinfo);
+				    &addrinfo);
 				if (try_retval == 0) {
 					/*
 					 * Worked with just the host,
@@ -1117,14 +1111,16 @@ int sock_initaddress(const char *host, const char *port,
 					 *
 					 * Free up the address info first.
 					 */
-					freeaddrinfo(*addrinfo);
+					freeaddrinfo(addrinfo);
 					get_gai_errstring(errbuf, errbuflen,
 					    "", retval, NULL, port);
 				} else {
 					/*
 					 * Didn't work with just the host,
 					 * so assume the problem is
-					 * with the host.
+					 * with the host; we assume
+					 * the original error indicates
+					 * the underlying problem.
 					 */
 					get_gai_errstring(errbuf, errbuflen,
 					    "", retval, host, NULL);
@@ -1132,13 +1128,14 @@ int sock_initaddress(const char *host, const char *port,
 			} else {
 				/*
 				 * Either the host or port was null, so
-				 * there's nothing to determine.
+				 * there's nothing to determine; report
+				 * the error from the original call.
 				 */
 				get_gai_errstring(errbuf, errbuflen, "",
 				    retval, host, port);
 			}
 		}
-		return -1;
+		return NULL;
 	}
 	/*
 	 * \warning SOCKET: I should check all the accept() in order to bind to all addresses in case
@@ -1153,30 +1150,28 @@ int sock_initaddress(const char *host, const char *port,
 	 * ignore all addresses that are neither?  (What, no IPX
 	 * support? :-))
 	 */
-	if (((*addrinfo)->ai_family != PF_INET) &&
-	    ((*addrinfo)->ai_family != PF_INET6))
+	if ((addrinfo->ai_family != PF_INET) &&
+	    (addrinfo->ai_family != PF_INET6))
 	{
 		if (errbuf)
 			snprintf(errbuf, errbuflen, "getaddrinfo(): socket type not supported");
-		freeaddrinfo(*addrinfo);
-		*addrinfo = NULL;
-		return -1;
+		freeaddrinfo(addrinfo);
+		return NULL;
 	}
 
 	/*
 	 * You can't do multicast (or broadcast) TCP.
 	 */
-	if (((*addrinfo)->ai_socktype == SOCK_STREAM) &&
-	    (sock_ismcastaddr((*addrinfo)->ai_addr) == 0))
+	if ((addrinfo->ai_socktype == SOCK_STREAM) &&
+	    (sock_ismcastaddr(addrinfo->ai_addr) == 0))
 	{
 		if (errbuf)
 			snprintf(errbuf, errbuflen, "getaddrinfo(): multicast addresses are not valid when using TCP streams");
-		freeaddrinfo(*addrinfo);
-		*addrinfo = NULL;
-		return -1;
+		freeaddrinfo(addrinfo);
+		return NULL;
 	}
 
-	return 0;
+	return addrinfo;
 }
 
 /*
@@ -1206,8 +1201,8 @@ int sock_initaddress(const char *host, const char *port,
  * '-2' if we got one of those errors.
  * For errors, an error message is returned in the 'errbuf' variable.
  */
-int sock_send(SOCKET sock, SSL *ssl _U_NOSSL_, const char *buffer, size_t size,
-    char *errbuf, int errbuflen)
+int sock_send(PCAP_SOCKET sock, SSL *ssl _U_NOSSL_, const char *buffer,
+    size_t size, char *errbuf, int errbuflen)
 {
 	int remaining;
 	ssize_t nsent;
@@ -1327,7 +1322,7 @@ int sock_send(SOCKET sock, SSL *ssl _U_NOSSL_, const char *buffer, size_t size,
  * \param totsize: total size of the buffer into which data is being copied.
  *
  * \param checkonly: '1' if we do not want to copy data into the buffer and we
- * want just do a buffer ovreflow control, '0' if data has to be copied as well.
+ * want just do a buffer overflow control, '0' if data has to be copied as well.
  *
  * \param errbuf: a pointer to an user-allocated buffer that will contain the complete
  * error message. This buffer has to be at least 'errbuflen' in length.
@@ -1389,7 +1384,7 @@ int sock_bufferize(const void *data, int size, char *outbuf, int *offset, int to
  *
  *   SOCK_RECEIVALL_XXX:
  *
- * 	if SOCK_RECEIVEALL_NO, return as soon as some data is ready
+ *	if SOCK_RECEIVEALL_NO, return as soon as some data is ready
  *	if SOCK_RECEIVALL_YES, wait until 'size' data has been
  *	    received (in case the socket does not have enough data available).
  *
@@ -1410,7 +1405,7 @@ int sock_bufferize(const void *data, int size, char *outbuf, int *offset, int to
  * The error message is returned in the 'errbuf' variable.
  */
 
-int sock_recv(SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer, size_t size,
+int sock_recv(PCAP_SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer, size_t size,
     int flags, char *errbuf, int errbuflen)
 {
 	int recv_flags = 0;
@@ -1517,8 +1512,8 @@ int sock_recv(SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer, size_t size,
  *
  * Returns the size of the datagram on success or -1 on error.
  */
-int sock_recv_dgram(SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer, size_t size,
-    char *errbuf, int errbuflen)
+int sock_recv_dgram(PCAP_SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer,
+    size_t size, char *errbuf, int errbuflen)
 {
 	ssize_t nread;
 #ifndef _WIN32
@@ -1665,7 +1660,8 @@ int sock_recv_dgram(SOCKET sock, SSL *ssl _U_NOSSL_, void *buffer, size_t size,
  * \return '0' if everything is fine, '-1' if some errors occurred.
  * The error message is returned in the 'errbuf' variable.
  */
-int sock_discard(SOCKET sock, SSL *ssl, int size, char *errbuf, int errbuflen)
+int sock_discard(PCAP_SOCKET sock, SSL *ssl, int size, char *errbuf,
+    int errbuflen)
 {
 #define TEMP_BUF_SIZE 32768
 
@@ -1705,10 +1701,10 @@ int sock_discard(SOCKET sock, SSL *ssl, int size, char *errbuf, int errbuflen)
  *
  * This function is useful after an accept() call in order to check if the connecting
  * host is allowed to connect to me. To do that, we have a buffer that keeps the list of the
- * allowed host; this function checks the sockaddr_storage structure of the connecting host
+ * allowed hosts; this function checks the sockaddr_storage structure of the connecting host
  * against this host list, and it returns '0' is the host is included in this list.
  *
- * \param hostlist: pointer to a string that contains the list of the allowed host.
+ * \param hostlist: pointer to a string that contains the list of the allowed hosts.
  *
  * \param sep: a string that keeps the separators used between the hosts (for example the
  * space character) in the host list.
@@ -1719,16 +1715,16 @@ int sock_discard(SOCKET sock, SSL *ssl, int size, char *errbuf, int errbuflen)
  * error message. This buffer has to be at least 'errbuflen' in length.
  * It can be NULL; in this case the error cannot be printed.
  *
- * \param errbuflen: length of the buffer that will contains the error. The error message cannot be
+ * \param errbuflen: length of the buffer that will contain the error. The error message cannot be
  * larger than 'errbuflen - 1' because the last char is reserved for the string terminator.
  *
  * \return It returns:
  * - '1' if the host list is empty
  * - '0' if the host belongs to the host list (and therefore it is allowed to connect)
- * - '-1' in case the host does not belong to the host list (and therefore it is not allowed to connect
- * - '-2' in case or error. The error message is returned in the 'errbuf' variable.
+ * - '-1' in case the host does not belong to the host list (and therefore it is not allowed to connect)
+ * - '-2' in case of error. The error message is returned in the 'errbuf' variable.
  */
-int sock_check_hostlist(char *hostlist, const char *sep, struct sockaddr_storage *from, char *errbuf, int errbuflen)
+int sock_check_hostlist(const char *hostlist, const char *sep, struct sockaddr_storage *from, char *errbuf, int errbuflen)
 {
 	/* checks if the connecting host is among the ones allowed */
 	if ((hostlist) && (hostlist[0]))
@@ -1751,7 +1747,7 @@ int sock_check_hostlist(char *hostlist, const char *sep, struct sockaddr_storage
 			return -2;
 		}
 
-		token = pcap_strtok_r(temphostlist, sep, &lasts);
+		token = pcapint_strtok_r(temphostlist, sep, &lasts);
 
 		/* it avoids a warning in the compilation ('addrinfo used but not initialized') */
 		addrinfo = NULL;
@@ -1781,7 +1777,7 @@ int sock_check_hostlist(char *hostlist, const char *sep, struct sockaddr_storage
 				getaddrinfo_failed = 1;
 
 				/* Get next token */
-				token = pcap_strtok_r(NULL, sep, &lasts);
+				token = pcapint_strtok_r(NULL, sep, &lasts);
 				continue;
 			}
 
@@ -1807,7 +1803,7 @@ int sock_check_hostlist(char *hostlist, const char *sep, struct sockaddr_storage
 			addrinfo = NULL;
 
 			/* Get next token */
-			token = pcap_strtok_r(NULL, sep, &lasts);
+			token = pcapint_strtok_r(NULL, sep, &lasts);
 		}
 
 		if (addrinfo)
@@ -1848,7 +1844,7 @@ int sock_check_hostlist(char *hostlist, const char *sep, struct sockaddr_storage
  * i.e. an sockaddr_storage structure.
  *
  * The two structures do not need to be sockaddr_storage; you can have both 'sockaddr_in' and
- * sockaddr_in6, properly acsted in order to be compliant to the function interface.
+ * sockaddr_in6, properly casted in order to be compliant to the function interface.
  *
  * This function will return '0' if the two addresses matches, '-1' if not.
  *
@@ -1923,7 +1919,8 @@ int sock_cmpaddr(struct sockaddr_storage *first, struct sockaddr_storage *second
  * \warning If the socket is using a connectionless protocol, the address may not be available
  * until I/O occurs on the socket.
  */
-int sock_getmyinfo(SOCKET sock, char *address, int addrlen, char *port, int portlen, int flags, char *errbuf, int errbuflen)
+int sock_getmyinfo(PCAP_SOCKET sock, char *address, int addrlen, char *port,
+    int portlen, int flags, char *errbuf, int errbuflen)
 {
 	struct sockaddr_storage mysockaddr;
 	socklen_t sockaddrlen;
@@ -2011,7 +2008,7 @@ int sock_getascii_addrport(const struct sockaddr_storage *sockaddr, char *addres
 			(memcmp(&((struct sockaddr_in6 *) sockaddr)->sin6_addr, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", sizeof(struct in6_addr)) == 0))
 		{
 			if (address)
-				pcap_strlcpy(address, SOCKET_NAME_NULL_DAD, addrlen);
+				pcapint_strlcpy(address, SOCKET_NAME_NULL_DAD, addrlen);
 			return retval;
 		}
 	}
@@ -2028,13 +2025,13 @@ int sock_getascii_addrport(const struct sockaddr_storage *sockaddr, char *addres
 
 		if (address)
 		{
-			pcap_strlcpy(address, SOCKET_NO_NAME_AVAILABLE, addrlen);
+			pcapint_strlcpy(address, SOCKET_NO_NAME_AVAILABLE, addrlen);
 			address[addrlen - 1] = 0;
 		}
 
 		if (port)
 		{
-			pcap_strlcpy(port, SOCKET_NO_PORT_AVAILABLE, portlen);
+			pcapint_strlcpy(port, SOCKET_NO_PORT_AVAILABLE, portlen);
 			port[portlen - 1] = 0;
 		}
 
@@ -2082,7 +2079,6 @@ int sock_getascii_addrport(const struct sockaddr_storage *sockaddr, char *addres
  */
 int sock_present2network(const char *address, struct sockaddr_storage *sockaddr, int addr_family, char *errbuf, int errbuflen)
 {
-	int retval;
 	struct addrinfo *addrinfo;
 	struct addrinfo hints;
 
@@ -2090,7 +2086,9 @@ int sock_present2network(const char *address, struct sockaddr_storage *sockaddr,
 
 	hints.ai_family = addr_family;
 
-	if ((retval = sock_initaddress(address, "22222" /* fake port */, &hints, &addrinfo, errbuf, errbuflen)) == -1)
+	addrinfo = sock_initaddress(address, "22222" /* fake port */, &hints,
+	    errbuf, errbuflen);
+	if (addrinfo == NULL)
 		return 0;
 
 	if (addrinfo->ai_family == PF_INET)

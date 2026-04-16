@@ -31,9 +31,7 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include "ftmacros.h"
 #include "diag-control.h"
@@ -93,7 +91,7 @@
 struct activehosts
 {
 	struct sockaddr_storage host;
-	SOCKET sockctrl;
+	PCAP_SOCKET sockctrl;
 	SSL *ssl;
 	uint8_t protocol_version;
 	int byte_swapped;
@@ -109,7 +107,7 @@ static struct activehosts *activeHosts;
  * See the documentation of pcap_remoteact_accept() and
  * pcap_remoteact_cleanup() for more details.
  */
-static SOCKET sockmain;
+static PCAP_SOCKET sockmain;
 static SSL *ssl_main;
 
 /*
@@ -123,11 +121,11 @@ struct pcap_rpcap {
 	 */
 	int rmt_clientside;
 
-	SOCKET rmt_sockctrl;		/* socket ID of the socket used for the control connection */
-	SOCKET rmt_sockdata;		/* socket ID of the socket used for the data connection */
+	PCAP_SOCKET rmt_sockctrl;	/* socket ID of the socket used for the control connection */
+	PCAP_SOCKET rmt_sockdata;	/* socket ID of the socket used for the data connection */
 	SSL *ctrl_ssl, *data_ssl;	/* optional transport of rmt_sockctrl and rmt_sockdata via TLS */
 	int rmt_flags;			/* we have to save flags, since they are passed by the pcap_open_live(), but they are used by the pcap_startcapture() */
-	int rmt_capstarted;		/* 'true' if the capture is already started (needed to knoe if we have to call the pcap_startcapture() */
+	int rmt_capstarted;		/* 'true' if the capture is already started (needed to know if we have to call the pcap_startcapture() */
 	char *currentfilter;		/* Pointer to a buffer (allocated at run-time) that stores the current filter. Needed when flag PCAP_OPENFLAG_NOCAPTURE_RPCAP is turned on. */
 
 	uint8_t protocol_version;	/* negotiated protocol version */
@@ -172,13 +170,13 @@ static void pcap_save_current_filter_rpcap(pcap_t *fp, const char *filter);
 static int pcap_setfilter_rpcap(pcap_t *fp, struct bpf_program *prog);
 static int pcap_setsampling_remote(pcap_t *fp);
 static int pcap_startcapture_remote(pcap_t *fp);
-static int rpcap_recv_msg_header(SOCKET sock, SSL *, struct rpcap_header *header, char *errbuf);
-static int rpcap_check_msg_ver(SOCKET sock, SSL *, uint8_t expected_ver, struct rpcap_header *header, char *errbuf);
-static int rpcap_check_msg_type(SOCKET sock, SSL *, uint8_t request_type, struct rpcap_header *header, uint16_t *errcode, char *errbuf);
-static int rpcap_process_msg_header(SOCKET sock, SSL *, uint8_t ver, uint8_t request_type, struct rpcap_header *header, char *errbuf);
-static int rpcap_recv(SOCKET sock, SSL *, void *buffer, size_t toread, uint32_t *plen, char *errbuf);
-static void rpcap_msg_err(SOCKET sockctrl, SSL *, uint32_t plen, char *remote_errbuf);
-static int rpcap_discard(SOCKET sock, SSL *, uint32_t len, char *errbuf);
+static int rpcap_recv_msg_header(PCAP_SOCKET sock, SSL *, struct rpcap_header *header, char *errbuf);
+static int rpcap_check_msg_ver(PCAP_SOCKET sock, SSL *, uint8_t expected_ver, struct rpcap_header *header, char *errbuf);
+static int rpcap_check_msg_type(PCAP_SOCKET sock, SSL *, uint8_t request_type, struct rpcap_header *header, uint16_t *errcode, char *errbuf);
+static int rpcap_process_msg_header(PCAP_SOCKET sock, SSL *, uint8_t ver, uint8_t request_type, struct rpcap_header *header, char *errbuf);
+static int rpcap_recv(PCAP_SOCKET sock, SSL *, void *buffer, size_t toread, uint32_t *plen, char *errbuf);
+static void rpcap_msg_err(PCAP_SOCKET sockctrl, SSL *, uint32_t plen, char *remote_errbuf);
+static int rpcap_discard(PCAP_SOCKET sock, SSL *, uint32_t len, char *errbuf);
 static int rpcap_read_packet_msg(struct pcap_rpcap const *, pcap_t *p, size_t size);
 
 /****************************************************
@@ -269,7 +267,10 @@ static int rpcap_read_packet_msg(struct pcap_rpcap const *, pcap_t *p, size_t si
 
 /*
  * Possible IPv4 family values other than the designated over-the-wire value,
- * which is 2 (because everybody uses 2 for AF_INET4).
+ * which is 2 (because everybody, except for Haiku, uses 2 for AF_INET,
+ * and Haiku has probably never run the old rpcapd code that put address
+ * structures directly on the wire, rather than the new rpcapd code
+ * that serializes addresses, using 2 for AF_INET).
  */
 #define SOCKADDR_IN_LEN		16	/* length of struct sockaddr_in */
 #define SOCKADDR_IN6_LEN	28	/* length of struct sockaddr_in6 */
@@ -295,7 +296,7 @@ static int rpcap_read_packet_msg(struct pcap_rpcap const *, pcap_t *p, size_t si
 #define SOLARIS_AF_INET6		26
 
 static int
-rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr_storage **sockaddrout, char *errbuf)
+rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr **sockaddrout, char *errbuf)
 {
 	/* Warning: we support only AF_INET and AF_INET6 */
 	switch (ntohs(sockaddrin->family))
@@ -307,10 +308,10 @@ rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr_storage **soc
 		struct rpcap_sockaddr_in *sockaddrin_ipv4;
 		struct sockaddr_in *sockaddrout_ipv4;
 
-		(*sockaddrout) = (struct sockaddr_storage *) malloc(sizeof(struct sockaddr_in));
+		(*sockaddrout) = (struct sockaddr *) malloc(sizeof(struct sockaddr_in));
 		if ((*sockaddrout) == NULL)
 		{
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "malloc() failed");
 			return -1;
 		}
@@ -323,7 +324,6 @@ rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr_storage **soc
 		break;
 		}
 
-#ifdef AF_INET6
 	case RPCAP_AF_INET6:
 	case NEW_BSD_AF_INET6_BSD_BE:
 	case NEW_BSD_AF_INET6_FREEBSD_BE:
@@ -337,10 +337,10 @@ rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr_storage **soc
 		struct rpcap_sockaddr_in6 *sockaddrin_ipv6;
 		struct sockaddr_in6 *sockaddrout_ipv6;
 
-		(*sockaddrout) = (struct sockaddr_storage *) malloc(sizeof(struct sockaddr_in6));
+		(*sockaddrout) = (struct sockaddr *) malloc(sizeof(struct sockaddr_in6));
 		if ((*sockaddrout) == NULL)
 		{
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "malloc() failed");
 			return -1;
 		}
@@ -353,7 +353,6 @@ rpcap_deseraddr(struct rpcap_sockaddr *sockaddrin, struct sockaddr_storage **soc
 		sockaddrout_ipv6->sin6_scope_id = ntohl(sockaddrin_ipv6->scope_id);
 		break;
 		}
-#endif
 
 	default:
 		/*
@@ -453,7 +452,7 @@ static int pcap_read_nocb_remote(pcap_t *p, struct pcap_pkthdr *pkt_header, u_ch
 	 */
 	header = (struct rpcap_header *) p->buffer;
 	net_pkt_header = (struct rpcap_pkthdr *) ((char *)p->buffer + sizeof(struct rpcap_header));
-	net_pkt_data = (u_char *)p->buffer + sizeof(struct rpcap_header) + sizeof(struct rpcap_pkthdr);
+	net_pkt_data = p->buffer + sizeof(struct rpcap_header) + sizeof(struct rpcap_pkthdr);
 
 	if (pr->rmt_flags & PCAP_OPENFLAG_DATATX_UDP)
 	{
@@ -693,7 +692,7 @@ static int pcap_read_rpcap(pcap_t *p, int cnt, pcap_handler callback, u_char *us
 			 * it to the callback, and count it so we can
 			 * return the count.
 			 */
-			pcap_post_process(p->linktype, pr->byte_swapped,
+			pcapint_post_process(p->linktype, pr->byte_swapped,
 			    &pkt_header, pkt_data);
 			(*callback)(user, &pkt_header, pkt_data);
 			n++;
@@ -834,7 +833,7 @@ static void pcap_cleanup_rpcap(pcap_t *fp)
 		pr->currentfilter = NULL;
 	}
 
-	pcap_cleanup_live_common(fp);
+	pcapint_cleanup_live_common(fp);
 
 	/* To avoid inconsistencies in the number of sock_init() */
 	sock_cleanup();
@@ -1021,7 +1020,6 @@ rpcap_remoteact_getsock(const char *host, int *error, char *errbuf)
 {
 	struct activehosts *temp;			/* temp var needed to scan the host list chain */
 	struct addrinfo hints, *addrinfo, *ai_next;	/* temp var needed to translate between hostname to its address */
-	int retval;
 
 	/* retrieve the network address corresponding to 'host' */
 	addrinfo = NULL;
@@ -1029,9 +1027,9 @@ rpcap_remoteact_getsock(const char *host, int *error, char *errbuf)
 	hints.ai_family = PF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	retval = sock_initaddress(host, NULL, &hints, &addrinfo, errbuf,
+	addrinfo = sock_initaddress(host, NULL, &hints, errbuf,
 	    PCAP_ERRBUF_SIZE);
-	if (retval != 0)
+	if (addrinfo == NULL)
 	{
 		*error = 1;
 		return NULL;
@@ -1094,7 +1092,7 @@ static int pcap_startcapture_remote(pcap_t *fp)
 	/* socket-related variables*/
 	struct addrinfo hints;			/* temp, needed to open a socket connection */
 	struct addrinfo *addrinfo;		/* temp, needed to open a socket connection */
-	SOCKET sockdata = 0;			/* socket descriptor of the data connection */
+	PCAP_SOCKET sockdata = 0;		/* socket descriptor of the data connection */
 	struct sockaddr_storage saddr;		/* temp, needed to retrieve the network data port chosen on the local machine */
 	socklen_t saddrlen;			/* temp, needed to retrieve the network data port chosen on the local machine */
 	int ai_family;				/* temp, keeps the address family used by the control connection */
@@ -1183,7 +1181,9 @@ static int pcap_startcapture_remote(pcap_t *fp)
 		hints.ai_flags = AI_PASSIVE;	/* Data connection is opened by the server toward the client */
 
 		/* Let's the server pick up a free network port for us */
-		if (sock_initaddress(NULL, NULL, &hints, &addrinfo, fp->errbuf, PCAP_ERRBUF_SIZE) == -1)
+		addrinfo = sock_initaddress(NULL, NULL, &hints, fp->errbuf,
+		    PCAP_ERRBUF_SIZE);
+		if (addrinfo == NULL)
 			goto error_nodiscard;
 
 		if ((sockdata = sock_open(NULL, addrinfo, SOCKOPEN_SERVER,
@@ -1308,7 +1308,9 @@ static int pcap_startcapture_remote(pcap_t *fp)
 			snprintf(portstring, PCAP_BUF_SIZE, "%d", ntohs(startcapreply.portdata));
 
 			/* Let's the server pick up a free network port for us */
-			if (sock_initaddress(host, portstring, &hints, &addrinfo, fp->errbuf, PCAP_ERRBUF_SIZE) == -1)
+			addrinfo = sock_initaddress(host, portstring, &hints,
+			    fp->errbuf, PCAP_ERRBUF_SIZE);
+			if (addrinfo == NULL)
 				goto error;
 
 			if ((sockdata = sock_open(host, addrinfo, SOCKOPEN_CLIENT, 0, fp->errbuf, PCAP_ERRBUF_SIZE)) == INVALID_SOCKET)
@@ -1320,7 +1322,7 @@ static int pcap_startcapture_remote(pcap_t *fp)
 		}
 		else
 		{
-			SOCKET socktemp;	/* We need another socket, since we're going to accept() a connection */
+			PCAP_SOCKET socktemp;	/* We need another socket, since we're going to accept() a connection */
 
 			/* Connection creation */
 			saddrlen = sizeof(struct sockaddr_storage);
@@ -1427,7 +1429,7 @@ static int pcap_startcapture_remote(pcap_t *fp)
 	fp->buffer = (u_char *)malloc(fp->bufsize);
 	if (fp->buffer == NULL)
 	{
-		pcap_fmt_errmsg_for_errno(fp->errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(fp->errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "malloc");
 		goto error;
 	}
@@ -1545,7 +1547,7 @@ error_nodiscard:
  *
  * \param sendbuf: the buffer on which the serialized data has to copied.
  *
- * \param sendbufidx: it is used to return the abounf of bytes copied into the buffer.
+ * \param sendbufidx: it is used to return the amount of bytes copied into the buffer.
  *
  * \param prog: the bpf program we have to copy.
  *
@@ -1701,7 +1703,7 @@ static int pcap_setfilter_rpcap(pcap_t *fp, struct bpf_program *prog)
 	if (!pr->rmt_capstarted)
 	{
 		/* copy filter into the pcap_t structure */
-		if (install_bpf_program(fp, prog) == -1)
+		if (pcapint_install_bpf_program(fp, prog) == -1)
 			return -1;
 		return 0;
 	}
@@ -1797,7 +1799,7 @@ static int pcap_createfilter_norpcappkt(pcap_t *fp, struct bpf_program *prog)
 			 * We have a current filter; add items to it to
 			 * filter out this rpcap session.
 			 */
-			if (pcap_asprintf(&newfilter,
+			if (pcapint_asprintf(&newfilter,
 			    "(%s) and not (host %s and host %s and port %s and port %s) and not (host %s and host %s and port %s)",
 			    pr->currentfilter, myaddress, peeraddress,
 			    myctrlport, peerctrlport, myaddress, peeraddress,
@@ -1815,7 +1817,7 @@ static int pcap_createfilter_norpcappkt(pcap_t *fp, struct bpf_program *prog)
 			 * We have no current filter; construct a filter to
 			 * filter out this rpcap session.
 			 */
-			if (pcap_asprintf(&newfilter,
+			if (pcapint_asprintf(&newfilter,
 			    "not (host %s and host %s and port %s and port %s) and not (host %s and host %s and port %s)",
 			    myaddress, peeraddress, myctrlport, peerctrlport,
 			    myaddress, peeraddress, mydataport) == -1)
@@ -1867,7 +1869,7 @@ static int pcap_setsampling_remote(pcap_t *fp)
 	struct rpcap_header header;		/* To keep the reply message */
 	struct rpcap_sampling *sampling_pars;	/* Structure that is needed to send sampling parameters to the remote host */
 
-	/* If no samping is requested, return 'ok' */
+	/* If no sampling is requested, return 'ok' */
 	if (fp->rmt_samp.method == PCAP_SAMP_NOSAMP)
 		return 0;
 
@@ -1967,7 +1969,7 @@ static int pcap_setsampling_remote(pcap_t *fp)
  * \return '0' if everything is fine, '-1' for an error.  For errors,
  * an error message string is returned in the 'errbuf' variable.
  */
-static int rpcap_doauth(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
+static int rpcap_doauth(PCAP_SOCKET sockctrl, SSL *ssl, uint8_t *ver,
     int *byte_swapped, struct pcap_rmtauth *auth, char *errbuf)
 {
 	char sendbuf[RPCAP_NETBUF_SIZE];	/* temporary buffer in which data that has to be sent is buffered */
@@ -2093,7 +2095,7 @@ static int rpcap_doauth(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
 		{
 			/* No - discard it and fail. */
 			snprintf(errbuf, PCAP_ERRBUF_SIZE,
-			    "Authenticaton reply from server is too short");
+			    "Authentication reply from server is too short");
 			(void)rpcap_discard(sockctrl, ssl, plen, NULL);
 			return -1;
 		}
@@ -2118,7 +2120,7 @@ static int rpcap_doauth(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
 			 * Discard it and fail.
 			 */
 			snprintf(errbuf, PCAP_ERRBUF_SIZE,
-			    "Authenticaton reply from server is too short");
+			    "Authentication reply from server is too short");
 			(void)rpcap_discard(sockctrl, ssl, plen, NULL);
 			return -1;
 		}
@@ -2239,6 +2241,7 @@ novers:
 	return -1;
 }
 
+#if RPCAP_USE_USERINFO
 /* non-alphanumeric unreserved characters plus sub-delims (RFC3986) */
 static const char userinfo_allowed_symbols[] = "-._~!&'()*+,;=";
 
@@ -2247,7 +2250,7 @@ static const char userinfo_allowed_symbols[] = "-._~!&'()*+,;=";
  * struct created from a username and password parsed out of the userinfo
  * portion of a URI.
  */
-static int rpcap_doauth_userinfo(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
+static int rpcap_doauth_userinfo(PCAP_SOCKET sockctrl, SSL *ssl, uint8_t *ver,
     int *byte_swapped, const char *userinfo, char *errbuf)
 {
 	struct pcap_rmtauth auth;
@@ -2263,20 +2266,21 @@ static int rpcap_doauth_userinfo(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
 
 	if ((ptr = userinfo) != NULL)
 	{
+		// FIXME: 'pos' is not limited to the sizes of 'username' and 'password'.
 		for (int pos = -1; (buf[++pos] = *ptr) != '\0'; ++ptr)
 		{
 			/* handle %xx encoded characters */
 			if (*ptr == '%')
 			{
 				/* the pedantic thing to do here would be throwing an error on
-				 * a sequence like `%hi', however a lot of common tools just accept
+				 * a sequence like '%hi', however a lot of common tools just accept
 				 * such malarkey, so... probably it will be fine? */
 				if (sscanf(ptr, "%%%02hhx", (unsigned char *)(buf+pos)) == 1)
 					ptr += 2;
 				/* other implementations aside, rejecting null bytes seems prudent */
 				if (buf[pos] == '\0')
 				{
-					snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid escape `%%00` in userinfo");
+					snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid escape '%%00' in userinfo");
 					return -1;
 				}
 			}
@@ -2296,12 +2300,12 @@ static int rpcap_doauth_userinfo(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
 				continue;
 			else if (*ptr < ' ' || *ptr > '~')
 			{
-				snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid character `\\%o` in userinfo", *ptr);
+				snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid character '\\%o' in userinfo", *ptr);
 				return -1;
 			}
 			else if (strchr(userinfo_allowed_symbols, *ptr) == NULL)
 			{
-				snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid character `%c` in userinfo", *ptr);
+				snprintf(errbuf, PCAP_ERRBUF_SIZE, "Invalid character '%c' in userinfo", *ptr);
 				return -1;
 			}
 		}
@@ -2312,6 +2316,7 @@ static int rpcap_doauth_userinfo(SOCKET sockctrl, SSL *ssl, uint8_t *ver,
 
 	return rpcap_doauth(sockctrl, ssl, ver, byte_swapped, NULL, errbuf);
 }
+#endif // RPCAP_USE_USERINFO
 
 
 /* We don't currently support non-blocking mode. */
@@ -2333,15 +2338,16 @@ pcap_setnonblock_rpcap(pcap_t *p, int nonblock _U_)
 
 static int
 rpcap_setup_session(const char *source, struct pcap_rmtauth *auth,
-    int *activep, SOCKET *sockctrlp, uint8_t *uses_sslp, SSL **sslp,
+    int *activep, PCAP_SOCKET *sockctrlp, uint8_t *uses_sslp, SSL **sslp,
     int rmt_flags, uint8_t *protocol_versionp, int *byte_swappedp,
     char *host, char *port, char *iface, char *errbuf)
 {
 	int type;
 	int auth_result;
-	char userinfo[512];			/* 256 characters each for username and password */
+	char userinfo[PCAP_BUF_SIZE+1];
 	struct activehosts *activeconn;		/* active connection, if there is one */
 	int error;				/* 1 if rpcap_remoteact_getsock got an error */
+
 	userinfo[0] = '\0';
 
 	/*
@@ -2349,7 +2355,7 @@ rpcap_setup_session(const char *source, struct pcap_rmtauth *auth,
 	 * You must have a valid source string even if we're in active mode,
 	 * because otherwise the call to the following function will fail.
 	 */
-	if (pcap_parsesrcstr_ex(source, &type, userinfo, host, port, iface, uses_sslp,
+	if (pcapint_parsesrcstr_ex(source, &type, userinfo, host, port, iface, uses_sslp,
 	    errbuf) == -1)
 		return -1;
 
@@ -2415,16 +2421,16 @@ rpcap_setup_session(const char *source, struct pcap_rmtauth *auth,
 		if (port[0] == 0)
 		{
 			/* the user chose not to specify the port */
-			if (sock_initaddress(host, RPCAP_DEFAULT_NETPORT,
-			    &hints, &addrinfo, errbuf, PCAP_ERRBUF_SIZE) == -1)
-				return -1;
+			addrinfo = sock_initaddress(host, RPCAP_DEFAULT_NETPORT,
+			    &hints, errbuf, PCAP_ERRBUF_SIZE);
 		}
 		else
 		{
-			if (sock_initaddress(host, port, &hints, &addrinfo,
-			    errbuf, PCAP_ERRBUF_SIZE) == -1)
-				return -1;
+			addrinfo = sock_initaddress(host, port, &hints,
+			    errbuf, PCAP_ERRBUF_SIZE);
 		}
+		if (addrinfo == NULL)
+			return -1;
 
 		if ((*sockctrlp = sock_open(host, addrinfo, SOCKOPEN_CLIENT, 0,
 		    errbuf, PCAP_ERRBUF_SIZE)) == INVALID_SOCKET)
@@ -2455,12 +2461,14 @@ rpcap_setup_session(const char *source, struct pcap_rmtauth *auth,
 #endif
 		}
 
+#if RPCAP_USE_USERINFO
 		if (auth == NULL && *userinfo != '\0')
 		{
 			auth_result = rpcap_doauth_userinfo(*sockctrlp, *sslp,
 			    protocol_versionp, byte_swappedp, userinfo, errbuf);
 		}
 		else
+#endif // RPCAP_USE_USERINFO
 		{
 			auth_result = rpcap_doauth(*sockctrlp, *sslp,
 			    protocol_versionp, byte_swappedp, auth, errbuf);
@@ -2529,7 +2537,7 @@ pcap_t *pcap_open_rpcap(const char *source, int snaplen, int flags, int read_tim
 	char *source_str;
 	struct pcap_rpcap *pr;		/* structure used when doing a remote live capture */
 	char host[PCAP_BUF_SIZE], ctrlport[PCAP_BUF_SIZE], iface[PCAP_BUF_SIZE];
-	SOCKET sockctrl;
+	PCAP_SOCKET sockctrl;
 	SSL *ssl = NULL;
 	uint8_t protocol_version;		/* negotiated protocol version */
 	int byte_swapped;			/* server is known to be byte-swapped */
@@ -2549,7 +2557,7 @@ pcap_t *pcap_open_rpcap(const char *source, int snaplen, int flags, int read_tim
 	}
 	source_str = strdup(source);
 	if (source_str == NULL) {
-		pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "malloc");
 		return NULL;
 	}
@@ -2701,7 +2709,7 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 {
 	uint8_t protocol_version;	/* protocol version */
 	int byte_swapped;		/* Server byte order is swapped from ours */
-	SOCKET sockctrl;		/* socket descriptor of the control connection */
+	PCAP_SOCKET sockctrl;		/* socket descriptor of the control connection */
 	SSL *ssl = NULL;		/* optional SSL handler for sockctrl */
 	uint32_t plen;
 	struct rpcap_header header;	/* structure that keeps the general header of the rpcap protocol */
@@ -2769,7 +2777,7 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 		dev = (pcap_if_t *)malloc(sizeof(pcap_if_t));
 		if (dev == NULL)
 		{
-			pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+			pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "malloc() failed");
 			goto error;
 		}
@@ -2813,14 +2821,14 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 			tmpstring[findalldevs_if.namelen] = 0;
 
 			/* Create the new device identifier */
-			if (pcap_createsrcstr_ex(tmpstring2, PCAP_SRC_IFREMOTE,
+			if (pcapint_createsrcstr_ex(tmpstring2, PCAP_SRC_IFREMOTE,
 			    NULL, host, port, tmpstring, uses_ssl, errbuf) == -1)
 				goto error;
 
 			dev->name = strdup(tmpstring2);
 			if (dev->name == NULL)
 			{
-				pcap_fmt_errmsg_for_errno(errbuf,
+				pcapint_fmt_errmsg_for_errno(errbuf,
 				    PCAP_ERRBUF_SIZE, errno, "malloc() failed");
 				goto error;
 			}
@@ -2841,11 +2849,11 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 
 			tmpstring[findalldevs_if.desclen] = 0;
 
-			if (pcap_asprintf(&dev->description,
+			if (pcapint_asprintf(&dev->description,
 			    "%s '%s' %s %s", PCAP_TEXT_SOURCE_ADAPTER,
 			    tmpstring, PCAP_TEXT_SOURCE_ON_REMOTE_HOST, host) == -1)
 			{
-				pcap_fmt_errmsg_for_errno(errbuf,
+				pcapint_fmt_errmsg_for_errno(errbuf,
 				    PCAP_ERRBUF_SIZE, errno, "malloc() failed");
 				goto error;
 			}
@@ -2871,7 +2879,7 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 			addr = (struct pcap_addr *) malloc(sizeof(struct pcap_addr));
 			if (addr == NULL)
 			{
-				pcap_fmt_errmsg_for_errno(errbuf,
+				pcapint_fmt_errmsg_for_errno(errbuf,
 				    PCAP_ERRBUF_SIZE, errno, "malloc() failed");
 				goto error;
 			}
@@ -2881,26 +2889,26 @@ pcap_findalldevs_ex_remote(const char *source, struct pcap_rmtauth *auth, pcap_i
 			addr->broadaddr = NULL;
 			addr->dstaddr = NULL;
 
-			if (rpcap_deseraddr(&ifaddr.addr,
-				(struct sockaddr_storage **) &addr->addr, errbuf) == -1)
+			if (rpcap_deseraddr(&ifaddr.addr, &addr->addr,
+				errbuf) == -1)
 			{
 				freeaddr(addr);
 				goto error;
 			}
-			if (rpcap_deseraddr(&ifaddr.netmask,
-				(struct sockaddr_storage **) &addr->netmask, errbuf) == -1)
+			if (rpcap_deseraddr(&ifaddr.netmask, &addr->netmask,
+				errbuf) == -1)
 			{
 				freeaddr(addr);
 				goto error;
 			}
-			if (rpcap_deseraddr(&ifaddr.broadaddr,
-				(struct sockaddr_storage **) &addr->broadaddr, errbuf) == -1)
+			if (rpcap_deseraddr(&ifaddr.broadaddr, &addr->broadaddr,
+				errbuf) == -1)
 			{
 				freeaddr(addr);
 				goto error;
 			}
-			if (rpcap_deseraddr(&ifaddr.dstaddr,
-				(struct sockaddr_storage **) &addr->dstaddr, errbuf) == -1)
+			if (rpcap_deseraddr(&ifaddr.dstaddr, &addr->dstaddr,
+				errbuf) == -1)
 			{
 				freeaddr(addr);
 				goto error;
@@ -3005,14 +3013,14 @@ error_nodiscard:
  * to implement; we provide some APIs for it that work only with rpcap.
  */
 
-SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const char *hostlist, char *connectinghost, struct pcap_rmtauth *auth, int uses_ssl, char *errbuf)
+PCAP_SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const char *hostlist, char *connectinghost, struct pcap_rmtauth *auth, int uses_ssl, char *errbuf)
 {
 	/* socket-related variables */
 	struct addrinfo hints;			/* temporary struct to keep settings needed to open the new socket */
 	struct addrinfo *addrinfo;		/* keeps the addrinfo chain; required to open a new socket */
 	struct sockaddr_storage from;	/* generic sockaddr_storage variable */
 	socklen_t fromlen;				/* keeps the length of the sockaddr_storage variable */
-	SOCKET sockctrl;				/* keeps the main socket identifier */
+	PCAP_SOCKET sockctrl;			/* keeps the main socket identifier */
 	SSL *ssl = NULL;				/* Optional SSL handler for sockctrl */
 	uint8_t protocol_version;		/* negotiated protocol version */
 	int byte_swapped;			/* 1 if server byte order is known to be the reverse of ours */
@@ -3030,29 +3038,29 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 	/* Warning: this call can be the first one called by the user. */
 	/* For this reason, we have to initialize the Winsock support. */
 	if (sock_init(errbuf, PCAP_ERRBUF_SIZE) == -1)
-		return (SOCKET)-1;
+		return (PCAP_SOCKET)-1;
 
 	/* Do the work */
 	if ((port == NULL) || (port[0] == 0))
 	{
-		if (sock_initaddress(address, RPCAP_DEFAULT_NETPORT_ACTIVE, &hints, &addrinfo, errbuf, PCAP_ERRBUF_SIZE) == -1)
-		{
-			return (SOCKET)-2;
-		}
+		addrinfo = sock_initaddress(address,
+		    RPCAP_DEFAULT_NETPORT_ACTIVE, &hints, errbuf,
+		    PCAP_ERRBUF_SIZE);
 	}
 	else
 	{
-		if (sock_initaddress(address, port, &hints, &addrinfo, errbuf, PCAP_ERRBUF_SIZE) == -1)
-		{
-			return (SOCKET)-2;
-		}
+		addrinfo = sock_initaddress(address, port, &hints, errbuf,
+		    PCAP_ERRBUF_SIZE);
 	}
-
+	if (addrinfo == NULL)
+	{
+		return (PCAP_SOCKET)-2;
+	}
 
 	if ((sockmain = sock_open(NULL, addrinfo, SOCKOPEN_SERVER, 1, errbuf, PCAP_ERRBUF_SIZE)) == INVALID_SOCKET)
 	{
 		freeaddrinfo(addrinfo);
-		return (SOCKET)-2;
+		return (PCAP_SOCKET)-2;
 	}
 	freeaddrinfo(addrinfo);
 
@@ -3069,7 +3077,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 	if (sockctrl == INVALID_SOCKET)
 	{
 		sock_geterrmsg(errbuf, PCAP_ERRBUF_SIZE, "accept() failed");
-		return (SOCKET)-2;
+		return (PCAP_SOCKET)-2;
 	}
 
 	/* Promote to SSL early before any error message may be sent */
@@ -3080,12 +3088,12 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 		if (! ssl)
 		{
 			sock_close(sockctrl, NULL, 0);
-			return (SOCKET)-1;
+			return (PCAP_SOCKET)-1;
 		}
 #else
 		snprintf(errbuf, PCAP_ERRBUF_SIZE, "No TLS support");
 		sock_close(sockctrl, NULL, 0);
-		return (SOCKET)-1;
+		return (PCAP_SOCKET)-1;
 #endif
 	}
 
@@ -3104,11 +3112,11 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 		}
 #endif
 		sock_close(sockctrl, NULL, 0);
-		return (SOCKET)-1;
+		return (PCAP_SOCKET)-1;
 	}
 
 	/* checks if the connecting host is among the ones allowed */
-	if (sock_check_hostlist((char *)hostlist, RPCAP_HOSTLIST_SEP, &from, errbuf, PCAP_ERRBUF_SIZE) < 0)
+	if (sock_check_hostlist(hostlist, RPCAP_HOSTLIST_SEP, &from, errbuf, PCAP_ERRBUF_SIZE) < 0)
 	{
 		rpcap_senderror(sockctrl, ssl, 0, PCAP_ERR_REMOTEACCEPT, errbuf, NULL);
 #ifdef HAVE_OPENSSL
@@ -3120,7 +3128,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 		}
 #endif
 		sock_close(sockctrl, NULL, 0);
-		return (SOCKET)-1;
+		return (PCAP_SOCKET)-1;
 	}
 
 	/*
@@ -3140,7 +3148,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 		}
 #endif
 		sock_close(sockctrl, NULL, 0);
-		return (SOCKET)-3;
+		return (PCAP_SOCKET)-3;
 	}
 
 	/* Checks that this host does not already have a cntrl connection in place */
@@ -3173,7 +3181,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 
 	if (temp == NULL)
 	{
-		pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
 		    errno, "malloc() failed");
 		rpcap_senderror(sockctrl, ssl, protocol_version, PCAP_ERR_REMOTEACCEPT, errbuf, NULL);
 #ifdef HAVE_OPENSSL
@@ -3185,7 +3193,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 		}
 #endif
 		sock_close(sockctrl, NULL, 0);
-		return (SOCKET)-1;
+		return (PCAP_SOCKET)-1;
 	}
 
 	memcpy(&temp->host, &from, fromlen);
@@ -3198,7 +3206,7 @@ SOCKET pcap_remoteact_accept_ex(const char *address, const char *port, const cha
 	return sockctrl;
 }
 
-SOCKET pcap_remoteact_accept(const char *address, const char *port, const char *hostlist, char *connectinghost, struct pcap_rmtauth *auth, char *errbuf)
+PCAP_SOCKET pcap_remoteact_accept(const char *address, const char *port, const char *hostlist, char *connectinghost, struct pcap_rmtauth *auth, char *errbuf)
 {
 	return pcap_remoteact_accept_ex(address, port, hostlist, connectinghost, auth, 0, errbuf);
 }
@@ -3207,7 +3215,6 @@ int pcap_remoteact_close(const char *host, char *errbuf)
 {
 	struct activehosts *temp, *prev;	/* temp var needed to scan the host list chain */
 	struct addrinfo hints, *addrinfo, *ai_next;	/* temp var needed to translate between hostname to its address */
-	int retval;
 
 	temp = activeHosts;
 	prev = NULL;
@@ -3218,9 +3225,9 @@ int pcap_remoteact_close(const char *host, char *errbuf)
 	hints.ai_family = PF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
-	retval = sock_initaddress(host, NULL, &hints, &addrinfo, errbuf,
+	addrinfo = sock_initaddress(host, NULL, &hints, errbuf,
 	    PCAP_ERRBUF_SIZE);
-	if (retval != 0)
+	if (addrinfo == NULL)
 	{
 		return -1;
 	}
@@ -3375,7 +3382,7 @@ int pcap_remoteact_list(char *hostlist, char sep, int size, char *errbuf)
 			return -1;
 		}
 
-		pcap_strlcat(hostlist, hoststr, PCAP_ERRBUF_SIZE);
+		pcapint_strlcat(hostlist, hoststr, PCAP_ERRBUF_SIZE);
 		hostlist[len - 1] = sep;
 		hostlist[len] = 0;
 
@@ -3388,7 +3395,7 @@ int pcap_remoteact_list(char *hostlist, char sep, int size, char *errbuf)
 /*
  * Receive the header of a message.
  */
-static int rpcap_recv_msg_header(SOCKET sock, SSL *ssl, struct rpcap_header *header, char *errbuf)
+static int rpcap_recv_msg_header(PCAP_SOCKET sock, SSL *ssl, struct rpcap_header *header, char *errbuf)
 {
 	int nrecv;
 
@@ -3408,7 +3415,7 @@ static int rpcap_recv_msg_header(SOCKET sock, SSL *ssl, struct rpcap_header *hea
  * Make sure the protocol version of a received message is what we were
  * expecting.
  */
-static int rpcap_check_msg_ver(SOCKET sock, SSL *ssl, uint8_t expected_ver, struct rpcap_header *header, char *errbuf)
+static int rpcap_check_msg_ver(PCAP_SOCKET sock, SSL *ssl, uint8_t expected_ver, struct rpcap_header *header, char *errbuf)
 {
 	/*
 	 * Did the server specify the version we negotiated?
@@ -3439,7 +3446,7 @@ static int rpcap_check_msg_ver(SOCKET sock, SSL *ssl, uint8_t expected_ver, stru
  * Check the message type of a received message, which should either be
  * the expected message type or RPCAP_MSG_ERROR.
  */
-static int rpcap_check_msg_type(SOCKET sock, SSL *ssl, uint8_t request_type, struct rpcap_header *header, uint16_t *errcode, char *errbuf)
+static int rpcap_check_msg_type(PCAP_SOCKET sock, SSL *ssl, uint8_t request_type, struct rpcap_header *header, uint16_t *errcode, char *errbuf)
 {
 	const char *request_type_string;
 	const char *msg_type_string;
@@ -3509,7 +3516,7 @@ static int rpcap_check_msg_type(SOCKET sock, SSL *ssl, uint8_t request_type, str
 /*
  * Receive and process the header of a message.
  */
-static int rpcap_process_msg_header(SOCKET sock, SSL *ssl, uint8_t expected_ver, uint8_t request_type, struct rpcap_header *header, char *errbuf)
+static int rpcap_process_msg_header(PCAP_SOCKET sock, SSL *ssl, uint8_t expected_ver, uint8_t request_type, struct rpcap_header *header, char *errbuf)
 {
 	uint16_t errcode;
 
@@ -3534,14 +3541,14 @@ static int rpcap_process_msg_header(SOCKET sock, SSL *ssl, uint8_t expected_ver,
 
 /*
  * Read data from a message.
- * If we're trying to read more data that remains, puts an error
- * message into errmsgbuf and returns -2.  Otherwise, tries to read
+ * If we're trying to read more data than remains, puts an error
+ * message into errbuf and returns -1.  Otherwise, tries to read
  * the data and, if that succeeds, subtracts the amount read from
  * the number of bytes of data that remains.
- * Returns 0 on success, logs a message and returns -1 on a network
- * error.
+ * Returns 0 on success and -1 on an error (short message or
+ * network error).
  */
-static int rpcap_recv(SOCKET sock, SSL *ssl, void *buffer, size_t toread, uint32_t *plen, char *errbuf)
+static int rpcap_recv(PCAP_SOCKET sock, SSL *ssl, void *buffer, size_t toread, uint32_t *plen, char *errbuf)
 {
 	int nread;
 
@@ -3564,7 +3571,7 @@ static int rpcap_recv(SOCKET sock, SSL *ssl, void *buffer, size_t toread, uint32
 /*
  * This handles the RPCAP_MSG_ERROR message.
  */
-static void rpcap_msg_err(SOCKET sockctrl, SSL *ssl, uint32_t plen, char *remote_errbuf)
+static void rpcap_msg_err(PCAP_SOCKET sockctrl, SSL *ssl, uint32_t plen, char *remote_errbuf)
 {
 	char errbuf[PCAP_ERRBUF_SIZE];
 
@@ -3595,7 +3602,7 @@ static void rpcap_msg_err(SOCKET sockctrl, SSL *ssl, uint32_t plen, char *remote
 		 * If we're not in UTF-8 mode, convert it to the local
 		 * code page.
 		 */
-		if (!pcap_utf_8_mode)
+		if (!pcapint_utf_8_mode)
 			utf_8_to_acp_truncated(remote_errbuf);
 #endif
 
@@ -3635,7 +3642,7 @@ static void rpcap_msg_err(SOCKET sockctrl, SSL *ssl, uint32_t plen, char *remote
  * Returns 0 on success, logs a message and returns -1 on a network
  * error.
  */
-static int rpcap_discard(SOCKET sock, SSL *ssl, uint32_t len, char *errbuf)
+static int rpcap_discard(PCAP_SOCKET sock, SSL *ssl, uint32_t len, char *errbuf)
 {
 	if (len != 0)
 	{
@@ -3655,7 +3662,7 @@ static int rpcap_discard(SOCKET sock, SSL *ssl, uint32_t len, char *errbuf)
 static int rpcap_read_packet_msg(struct pcap_rpcap const *rp, pcap_t *p, size_t size)
 {
 	u_char *bp;
-	int cc;
+	u_int cc;
 	int bytes_read;
 
 	bp = p->bp;
@@ -3665,7 +3672,7 @@ static int rpcap_read_packet_msg(struct pcap_rpcap const *rp, pcap_t *p, size_t 
 	 * Loop until we have the amount of data requested or we get
 	 * an error or interrupt.
 	 */
-	while ((size_t)cc < size)
+	while (cc < size)
 	{
 		/*
 		 * We haven't read all of the packet header yet.

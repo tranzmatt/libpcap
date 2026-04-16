@@ -31,9 +31,7 @@
  * SUCH DAMAGE.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include "ftmacros.h"
 
@@ -43,6 +41,7 @@
 #include <pcap.h>		// for PCAP_ERRBUF_SIZE
 
 #include "portability.h"
+#include "pcap-int.h"
 #include "rpcapd.h"
 #include "config_params.h"	// configuration file parameters
 #include "fileconf.h"
@@ -57,16 +56,6 @@
 #define PARAM_NULLAUTHPERMIT	"NullAuthPermit"
 
 static char *skipws(char *ptr);
-
-/*
- * Locale-independent version checks for alphabetical and alphanumerical
- * characters that also can handle being handed a char value that might
- * be negative.
- */
-#define FILECONF_ISALPHA(c) \
-	(((c) >= 'A' && (c) <= 'Z') || ((c) >= 'a' && (c) <= 'z'))
-#define FILECONF_ISALNUM(c) \
-	(FILECONF_ISALPHA(c) || ((c) >= '0' && (c) <= '9'))
 
 void fileconf_read(void)
 {
@@ -144,7 +133,7 @@ void fileconf_read(void)
 			// Is the next character alphabetic?  If not,
 			// this isn't a valid parameter name.
 			//
-			if (FILECONF_ISALPHA(*ptr))
+			if (! PCAP_ISALPHA(*ptr))
 			{
 				rpcapd_log(LOGPRIO_ERROR,
 				    "%s, line %u doesn't have a valid parameter name",
@@ -158,7 +147,7 @@ void fileconf_read(void)
 			// That's the name of the parameter being set.
 			//
 			param = ptr;
-			while (FILECONF_ISALNUM(*ptr) || *ptr == '-' || *ptr == '_')
+			while (PCAP_ISALNUM(*ptr) || *ptr == '-' || *ptr == '_')
 				ptr++;
 
 			//
@@ -323,7 +312,7 @@ void fileconf_read(void)
 				// it.
 				//
 				*ptr++ = '\0';
-				result = pcap_strlcpy(activelist[num_active_clients].address, address, sizeof(activelist[num_active_clients].address));
+				result = pcapint_strlcpy(activelist[num_active_clients].address, address, sizeof(activelist[num_active_clients].address));
 				if (result >= sizeof(activelist[num_active_clients].address))
 				{
 					//
@@ -335,17 +324,19 @@ void fileconf_read(void)
 					    (unsigned int)(sizeof(activelist[num_active_clients].address) - 1));
 					continue;
 				}
-				if (strcmp(port, "DEFAULT") == 0) // the user choose a custom port
-					result = pcap_strlcpy(activelist[num_active_clients].port, RPCAP_DEFAULT_NETPORT_ACTIVE, sizeof(activelist[num_active_clients].port));
+				if (strcmp(port, "DEFAULT") == 0)
+					// The default port.
+					result = pcapint_strlcpy(activelist[num_active_clients].port, RPCAP_DEFAULT_NETPORT_ACTIVE, sizeof(activelist[num_active_clients].port));
 				else
-					result = pcap_strlcpy(activelist[num_active_clients].port, port, sizeof(activelist[num_active_clients].port));
-				if (result >= sizeof(activelist[num_active_clients].address))
+					// A custom port.
+					result = pcapint_strlcpy(activelist[num_active_clients].port, port, sizeof(activelist[num_active_clients].port));
+				if (result >= sizeof(activelist[num_active_clients].port))
 				{
 					//
 					// It didn't fit.
 					//
 					rpcapd_log(LOGPRIO_ERROR,
-					    "%s, line %u has an %s parameter with an port with more than %u characters",
+					    "%s, line %u has an %s parameter with a port with more than %u characters",
 					    loadfile, lineno, PARAM_ACTIVECLIENT,
 					    (unsigned int)(sizeof(activelist[num_active_clients].port) - 1));
 					continue;
@@ -398,7 +389,7 @@ void fileconf_read(void)
 					// The list is not empty, so prepend
 					// a comma before adding this host.
 					//
-					result = pcap_strlcat(hostlist, ",", sizeof(hostlist));
+					result = pcapint_strlcat(hostlist, ",", sizeof(hostlist));
 					if (result >= sizeof(hostlist))
 					{
 						//
@@ -414,7 +405,7 @@ void fileconf_read(void)
 						continue;
 					}
 				}
-				result = pcap_strlcat(hostlist, host, sizeof(hostlist));
+				result = pcapint_strlcat(hostlist, host, sizeof(hostlist));
 				if (result >= sizeof(hostlist))
 				{
 					//
@@ -507,13 +498,13 @@ int fileconf_save(const char *savefile)
 		fprintf(fp, "# Hosts which are allowed to connect to this server (passive mode)\n");
 		fprintf(fp, "# Format: PassiveClient = <name or address>\n\n");
 
-		pcap_strlcpy(temphostlist, hostlist, sizeof (temphostlist));
+		pcapint_strlcpy(temphostlist, hostlist, sizeof (temphostlist));
 
-		token = pcap_strtok_r(temphostlist, RPCAP_HOSTLIST_SEP, &lasts);
+		token = pcapint_strtok_r(temphostlist, RPCAP_HOSTLIST_SEP, &lasts);
 		while(token != NULL)
 		{
 			fprintf(fp, "%s = %s\n", PARAM_PASSIVECLIENT, token);
-			token = pcap_strtok_r(NULL, RPCAP_HOSTLIST_SEP, &lasts);
+			token = pcapint_strtok_r(NULL, RPCAP_HOSTLIST_SEP, &lasts);
 		}
 
 

@@ -17,16 +17,18 @@
 .\" WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
 .\" MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 .\"
-.TH RPCAPD-CONFIG @MAN_FILE_FORMATS@ "6 January 2019"
+.TH RPCAPD-CONFIG @MAN_FILE_FORMATS@ "21 October 2025"
 .SH NAME
 rpcapd-config \- rpcapd configuration file format
 .SH DESCRIPTION
 An
-.B rpcapd
+.I rpcapd
 configuration file allows parameters to be set for
 .BR rpcapd (@MAN_ADMIN_COMMANDS@).
 .LP
-A # introduces a comment that runs to the end of the line.  Blank lines,
+A
+.B #
+introduces a comment that runs to the end of the line.  Blank lines,
 and lines with only a comment, are ignored.  Leading and trailing white
 space on a line are also ignored.
 .LP
@@ -34,7 +36,9 @@ Lines that set a parameter are of the form
 .IP
 \fIparameter\fB=\fIvalue\fR
 .LP
-Whitespace preceding or following the = is ignored.
+Whitespace preceding or following the
+.B =
+is ignored.
 .LP
 The
 .IR parameter s
@@ -43,10 +47,12 @@ are:
 .B ActiveClient
 .I value
 is a host name or IP address, followed by a comma,
-semicolon, or space, followed by a port name and address or
-.BR DEFAULT .
-.B DEFAULT
-specifies the default active mode port for rpcapd, port 2003.
+semicolon, or space, followed by either a port number or a service name
+recognized by
+.BR getaddrinfo (3)
+or the word
+.B \%DEFAULT
+to mean port number 2003.
 Each
 .B ActiveClient
 line adds the host and port to the list of clients to which the server
@@ -54,14 +60,10 @@ should connect in active mode.
 .TP
 .B PassiveClient
 .I value
-is a host name or IP address, followed by a comma,
-semicolon, or space, followed by a port name and address or
-.BR DEFAULT .
-.B DEFAULT
-specifies the default passive mode port for rpcapd, port 2002.
+is a host name or IP address.
 Each
 .B PassiveClient
-line adds the host and port to the list of clients addresses and ports
+line adds the host to the list of client addresses
 that are allowed to connect to the server in passive mode.
 .TP
 .B NullAuthPermit
@@ -72,7 +74,7 @@ or
 .BR NO .
 .B YES
 means that null authentication is permitted;
-.B No
+.B NO
 means that it is not permitted.
 .SH SEE ALSO
 .BR rpcapd (@MAN_ADMIN_COMMANDS@)

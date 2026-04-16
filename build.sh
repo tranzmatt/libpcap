@@ -1,12 +1,35 @@
 #!/bin/sh -e
 
-# This script runs one build with setup environment variables: CC, CMAKE and
-# REMOTE.
+# To cross-compile using Autoconf, it is necessary to run ./configure with the
+# "--host=<cpu>-<vendor>-<os>" option.  In this case, if the CC variable is not
+# set, Autoconf will try using "<cpu>-<vendor>-<os>-gcc" (which may not exist
+# because the executable is called "<cpu>-<vendor>-<os>-gcc-<version>"), then
+# "gcc" and "cc" (which typically will be native compilers).  Whether this
+# works out for Autoconf or not, this will not work for this script, which
+# needs to run the same executable as Autoconf to identify the compiler and to
+# take any conditional steps that depend on it.  Thus make CC a mandatory
+# variable when cross-compiling.
+if [ -n "$TARGET" ] && [ -z "$CC" ]; then
+    echo "Error: CC must be set if TARGET is set." >&2
+    exit 1
+fi
+
+# This script runs one build with the setup environment variables below.
 : "${CC:=gcc}"
 : "${CMAKE:=no}"
 : "${REMOTE:=no}"
+: "${PROTOCHAIN:=yes}"
 : "${LIBPCAP_TAINTED:=no}"
+: "${LIBPCAP_CMAKE_TAINTED:=no}"
 : "${MAKE_BIN:=make}"
+# At least one OS (AIX 7) where this software can build does not have at least
+# one command (mktemp) required for a successful run of "make releasetar".
+: "${TEST_RELEASETAR:=yes}"
+
+if [ -n "$TARGET" ] && [ "$CMAKE" != no ]; then
+    echo "Error: this script does not implement cross-compiling with CMake." >&2
+    exit 1
+fi
 
 . ./build_common.sh
 # Install directory prefix
@@ -24,91 +47,94 @@ print_cc_version
 # later warnings in the same matrix subset trigger an error.
 # shellcheck disable=SC2221,SC2222
 case `cc_id`/`os_id` in
-gcc-*/Linux-*)
-    # This warning is a bit odd.  It is steadily present in Cirrus CI, but not
-    # in Buildbot.  On my Linux system with the same exact distribution and GCC
-    # as Cirrus CI it reproduces only if GCC receives the "-g" flag:
-    # make CFLAGS=-g -- does not reproduce
-    # CFLAGS=-g make -- reproduces
-    # make -- reproduces
-    #
-    # pcap-linux.c:947:8: warning: ignoring return value of 'write', declared
-    # with attribute warn_unused_result [-Wunused-result]
-    #
-    # And even this way it does not make GCC exit with an error when it has
-    # reported the warning and has received the "-Werror" flag. So let's keep
-    # this block no-op for now.
-    ;;
-clang-*/NetBSD-*)
-    # pcap-bpf.c:1044:18: warning: implicit conversion loses integer precision:
-    # 'uint64_t' (aka 'unsigned long') to 'u_int' (aka 'unsigned int')
-    # [-Wshorten-64-to-32]
-    # pcap-bpf.c:1045:18: warning: implicit conversion loses integer precision:
-    # 'uint64_t' (aka 'unsigned long') to 'u_int' (aka 'unsigned int')
-    # [-Wshorten-64-to-32]
-    # pcap-bpf.c:1274:39: warning: implicit conversion loses integer precision:
-    # 'long' to 'suseconds_t' (aka 'int') [-Wshorten-64-to-32]
+tcc-*/*)
+    # At least one warning is expected because TCC does not implement
+    # thread-local storage.
     LIBPCAP_TAINTED=yes
     ;;
-clang-*/SunOS-5.11)
-    # (Solaris 11 and OpenIndiana)
-    # pcap-bpf.c:1044:18: warning: implicit conversion loses integer precision:
-    #   'uint64_t' (aka 'unsigned long') to 'u_int' (aka 'unsigned int')
-    #   [-Wshorten-64-to-32]
-    # pcap-bpf.c:1045:18: warning: implicit conversion loses integer precision:
-    #   'uint64_t' (aka 'unsigned long') to 'u_int' (aka 'unsigned int')
-    #   [-Wshorten-64-to-32]
-    # fad-getad.c:266:52: warning: implicit conversion loses integer precision:
-    #   'uint64_t'(aka 'unsigned long') to 'bpf_u_int32' (aka 'unsigned int')
-    #   [-Wshorten-64-to-32]
-    # (Solaris 11)
-    # pcap-bpf.c:1843:22: warning: implicit conversion loses integer precision:
-    #   'long' to 'int' [-Wshorten-64-to-32]
-    # (OpenIndiana)
-    # rpcapd.c:393:18: warning: this function declaration is not a prototype
-    #   [-Wstrict-prototypes]
-    [ "`uname -p`" = i386 ] && LIBPCAP_TAINTED=yes
-    ;;
-suncc-5.1[45]/SunOS-5.11)
-    # "scanner.l", line 257: warning: statement not reached
-    # (186 warnings for scanner.l)
-    #
-    # "./filtertest.c", line 259: warning: statement not reached
-    # "./filtertest.c", line 276: warning: statement not reached
-    # "./filtertest.c", line 281: warning: statement not reached
+clang-3.4/Linux-*)
+    # pcap-netfilter-linux.c:427:10: error: will never be executed
+    #   [-Werror,-Wunreachable-code]
+    # pcap.c:3812:4: error: will never be executed
+    #   [-Werror,-Wunreachable-code]
+    # scanner.l:662:3: warning: will never be executed [-Wunreachable-code]
+    # gencode.c:7061:3: warning: will never be executed [-Wunreachable-code]
     LIBPCAP_TAINTED=yes
     ;;
-*/Haiku-*)
-    # (GCC 8.3.0 and later, Clang 9.0.1.)
-    # pcap-haiku.cpp:55:21: warning: unused variable 'handlep' [-Wunused-variable]
-    # pcap-haiku.cpp:50:37: warning: unused parameter 'maxPackets' [-Wunused-parameter]
-    # pcap-haiku.cpp:111:47: warning: unused parameter 'buffer' [-Wunused-parameter]
-    # pcap-haiku.cpp:111:59: warning: unused parameter 'size' [-Wunused-parameter]
-    # pcap-haiku.cpp:268:26: warning: unused parameter 'name' [-Wunused-parameter]
-    # pcap-haiku.cpp:274:26: warning: unused parameter 'name' [-Wunused-parameter]
-    # pcap-haiku.cpp:274:58: warning: unused parameter 'errbuf' [-Wunused-parameter]
-    #
-    # (The warnings below come from GCC and Clang in CMake builds after installing
-    # all system updates.)
-    # gencode.c:4143:9: warning: converting a packed 'struct in6_addr' pointer
-    #   (alignment 1) to a 'uint32_t' {aka 'unsigned int'} pointer (alignment 4) may
-    #   result in an unaligned pointer value [-Waddress-of-packed-member]
-    # gencode.c:4144:9: warning: converting a packed 'struct in6_addr' pointer
-    #   (alignment 1) to a 'uint32_t' {aka 'unsigned int'} pointer (alignment 4) may
-    #   result in an unaligned pointer value [-Waddress-of-packed-member]
-    # gencode.c:7189:9: warning: converting a packed 'struct in6_addr' pointer
-    #   (alignment 1) to a 'uint32_t' {aka 'unsigned int'} pointer (alignment 4) may
-    #   result in an unaligned pointer value [-Waddress-of-packed-member]
-    # gencode.c:7190:9: warning: converting a packed 'struct in6_addr' pointer
-    #   (alignment 1) to a 'uint32_t' {aka 'unsigned int'} pointer (alignment 4) may
-    #   result in an unaligned pointer value [-Waddress-of-packed-member]
+suncc-5.14/SunOS-5.10|suncc-5.15/SunOS-5.10)
+    # (Sun C 5.15 on Solaris 11.4 does not generate any of these warnings.)
+    # "./gencode.c", line 599: warning: function "bpf_error" marked as not
+    #   returning, might return
+    # "optimize.c", line 2409: warning: function "opt_error" marked as not
+    #   returning, might return
+    # "optimize.c", line 2915: warning: function "conv_error" marked as not
+    #   returning, might return
+    # "./can_set_rfmon_test.c", line 95: warning: function "error" marked as
+    #   not returning, might return
+    # "./capturetest.c", line 314: warning: function "usage" marked as not
+    #   returning, might return
+    # "./capturetest.c", line 333: warning: function "error" marked as not
+    #   returning, might return
+    # "./filtertest.c", line 163: warning: function "error" marked as not
+    #   returning, might return
+    # "./filtertest.c", line 478: warning: function "usage" marked as not
+    #   returning, might return
+    # "./opentest.c", line 222: warning: function "usage" marked as not
+    #   returning, might return
+    # "./opentest.c", line 241: warning: function "error" marked as not
+    #   returning, might return
+    # "./nonblocktest.c", line 69: warning: function "error" marked as not
+    #   returning, might return
+    # "./nonblocktest.c", line 94: warning: function "usage" marked as not
+    #   returning, might return
+    # "./reactivatetest.c", line 89: warning: function "error" marked as not
+    #   returning, might return
+    # "./selpolltest.c", line 375: warning: function "usage" marked as not
+    #   returning, might return
+    # "./selpolltest.c", line 394: warning: function "error" marked as not
+    #   returning, might return
+    # "./threadsignaltest.c", line 339: warning: function "usage" marked as
+    #   not returning, might return
+    # "./threadsignaltest.c", line 358: warning: function "error" marked as
+    #   not returning, might return
+    # "./writecaptest.c", line 490: warning: function "usage" marked as not
+    #   returning, might return
+    # "./writecaptest.c", line 509: warning: function "error" marked as not
+    #   returning, might return
     LIBPCAP_TAINTED=yes
+    ;;
+*/QNX-*)
+    # pcap-bpf.c:1409:28: warning: implicit conversion loses integer precision:
+    #   'long' to 'suseconds_t' (aka 'int')
+    # pcap-netmap.c:50: warning: "IFF_PPROMISC" redefined
+    #   In file included from .../qnx803/target/qnx/usr/include/net/netmap_user.h:93,
+    #                    from ./pcap-netmap.c:38:
+    #   .../qnx803/target/qnx/usr/include/net/if.h:167: note: this is the
+    #   location of the previous definition
+    LIBPCAP_TAINTED=yes
+    ;;
+*)
     ;;
 esac
 [ "$LIBPCAP_TAINTED" != yes ] && CFLAGS=`cc_werr_cflags`
 
+case `cc_id`/`os_id` in
+clang-*/SunOS-5.11)
+    # Work around https://www.illumos.org/issues/16369
+    [ "`uname -o`" = illumos ] && grep -Fq OpenIndiana /etc/release && CFLAGS="-Wno-fuse-ld-path${CFLAGS:+ $CFLAGS}"
+    ;;
+esac
+
+# If necessary, set LIBPCAP_CMAKE_TAINTED here to exempt particular cmake from
+# warnings. Use as specific terms as possible (e.g. some specific version and
+# some specific OS).
+
+[ "$LIBPCAP_CMAKE_TAINTED" != yes ] && CMAKE_OPTIONS='-Werror=dev'
+
 if [ "$CMAKE" = no ]; then
-    run_after_echo ./configure --prefix="$PREFIX" --enable-remote="$REMOTE"
+    run_after_echo ./autogen.sh
+    run_after_echo ./configure --prefix="$PREFIX" ${TARGET:+--host=$TARGET} \
+        --enable-protochain="$PROTOCHAIN" --enable-remote="$REMOTE"
 else
     # Remove the leftovers from any earlier in-source builds, so this
     # out-of-source build does not break because of that.
@@ -119,8 +145,10 @@ else
     run_after_echo rm -rf CMakeFiles/ CMakeCache.txt build/
     run_after_echo mkdir build
     run_after_echo cd build
+    run_after_echo cmake --version
     run_after_echo cmake ${CFLAGS:+-DEXTRA_CFLAGS="$CFLAGS"} \
-        -DCMAKE_INSTALL_PREFIX="$PREFIX" -DENABLE_REMOTE="$REMOTE" ..
+        ${CMAKE_OPTIONS:+"$CMAKE_OPTIONS"} \
+        -DCMAKE_INSTALL_PREFIX="$PREFIX" -DENABLE_PROTOCHAIN="$PROTOCHAIN" -DENABLE_REMOTE="$REMOTE" ..
 fi
 run_after_echo "$MAKE_BIN" -s clean
 if [ "$CMAKE" = no ]; then
@@ -132,13 +160,41 @@ else
     run_after_echo "$MAKE_BIN" testprogs
 fi
 run_after_echo "$MAKE_BIN" install
+
+run_after_echo "$PREFIX/bin/pcap-config" --help
+run_after_echo "$PREFIX/bin/pcap-config" --version
+run_after_echo "$PREFIX/bin/pcap-config" --cflags
+run_after_echo "$PREFIX/bin/pcap-config" --libs
+run_after_echo "$PREFIX/bin/pcap-config" --additional-libs
+run_after_echo "$PREFIX/bin/pcap-config" --libs --static
+run_after_echo "$PREFIX/bin/pcap-config" --additional-libs --static
+run_after_echo "$PREFIX/bin/pcap-config" --libs --static-pcap-only
+run_after_echo "$PREFIX/bin/pcap-config" --additional-libs --static-pcap-only
+
+[ "$REMOTE" = yes ] && print_so_deps "$PREFIX/sbin/rpcapd"
+[ "$REMOTE" = yes ] && [ -z "$TARGET" ] && run_after_echo "$PREFIX/sbin/rpcapd" -h
+
 # VALGRIND_CMD is meant either to collapse or to expand.
 # shellcheck disable=SC2086
-if [ "$CMAKE" = no ]; then
-    run_after_echo $VALGRIND_CMD testprogs/findalldevstest
-    run_after_echo "$MAKE_BIN" releasetar
+if [ -n "$TARGET" ]; then
+    echo '### Not running any tests for a cross-compile build. ###'
+elif [ "$CMAKE" = no ]; then
+    run_after_echo $VALGRIND_CMD testprogs/versiontest
+    FILTERTEST_BIN="$VALGRIND_CMD testprogs/filtertest"
+    export FILTERTEST_BIN
+    TRANSLATETEST_BIN="$VALGRIND_CMD testprogs/translatetest"
+    export TRANSLATETEST_BIN
+    run_after_echo "$MAKE_BIN" -s check
+    run_after_echo $VALGRIND_CMD ${VALGRIND_CMD:+--suppressions=testprogs/findalldevstest.supp} testprogs/findalldevstest
+    [ "$TEST_RELEASETAR" = yes ] && run_after_echo "$MAKE_BIN" releasetar
 else
-    run_after_echo $VALGRIND_CMD run/findalldevstest
+    run_after_echo $VALGRIND_CMD run/versiontest
+    FILTERTEST_BIN="$VALGRIND_CMD run/filtertest"
+    export FILTERTEST_BIN
+    TRANSLATETEST_BIN="$VALGRIND_CMD run/translatetest"
+    export TRANSLATETEST_BIN
+    run_after_echo "$MAKE_BIN" -s check
+    run_after_echo $VALGRIND_CMD ${VALGRIND_CMD:+--suppressions=../testprogs/findalldevstest.supp} run/findalldevstest
 fi
 handle_matrix_debug
 if [ "$DELETE_PREFIX" = yes ]; then

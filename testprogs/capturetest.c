@@ -86,7 +86,14 @@ sigint_handler(int signum _U_)
  * We do have UN*X-style signals (we assume that "not Windows" means "UN*X").
  */
 #define B_OPTION	"b"
+
+#ifdef SA_RESTART
 #define R_OPTION	"r"
+#else
+// QNX 8.0 neither defines nor supports SA_RESTART.
+#define R_OPTION	""
+#endif // SA_RESTART
+
 #define S_OPTION	"s"
 #endif
 
@@ -96,15 +103,17 @@ sigint_handler(int signum _U_)
 int
 main(int argc, char **argv)
 {
-	register int op;
-	register char *cp, *cmdbuf, *device;
+	int op;
+	char *cp, *cmdbuf, *device;
 	long longarg;
 	char *p;
 	int timeout = 1000;
 	int immediate = 0;
 	int nonblock = 0;
 #ifndef _WIN32
+#ifdef SA_RESTART
 	int sigrestart = 0;
+#endif // SA_RESTART
 	int catchsigint = 0;
 #endif
 	pcap_if_t *devlist;
@@ -143,9 +152,11 @@ main(int argc, char **argv)
 			break;
 
 #ifndef _WIN32
+#ifdef SA_RESTART
 		case 'r':
 			sigrestart = 1;
 			break;
+#endif // SA_RESTART
 
 		case 's':
 			catchsigint = 1;
@@ -200,7 +211,11 @@ main(int argc, char **argv)
 		/*
 		 * Should SIGINT interrupt, or restart, system calls?
 		 */
+#ifdef SA_RESTART
 		action.sa_flags = sigrestart ? SA_RESTART : 0;
+#else
+		action.sa_flags = 0;
+#endif // SA_RESTART
 
 		if (sigaction(SIGINT, &action, NULL) == -1)
 			error("Can't catch SIGINT: %s\n",
@@ -265,9 +280,13 @@ main(int argc, char **argv)
 			printf("%d packets seen, %d packets counted after pcap_dispatch returns\n",
 			    status, packet_count);
 			struct pcap_stat ps;
-			pcap_stats(pd, &ps);
-			printf("%d ps_recv, %d ps_drop, %d ps_ifdrop\n",
-			    ps.ps_recv, ps.ps_drop, ps.ps_ifdrop);
+			if (pcap_stats(pd, &ps) < 0) {
+				(void)fprintf(stderr, "pcap_stats: %s\n",
+				    pcap_geterr(pd));
+			} else {
+				printf("%d ps_recv, %d ps_drop, %d ps_ifdrop\n",
+				    ps.ps_recv, ps.ps_drop, ps.ps_ifdrop);
+			}
 		}
 	}
 	if (status == -2) {
@@ -349,10 +368,10 @@ warning(const char *fmt, ...)
  * Copy arg vector into a new buffer, concatenating arguments with spaces.
  */
 static char *
-copy_argv(register char **argv)
+copy_argv(char **argv)
 {
-	register char **p;
-	register size_t len = 0;
+	char **p;
+	size_t len = 0;
 	char *buf;
 	char *src, *dst;
 

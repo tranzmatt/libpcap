@@ -236,7 +236,7 @@ struct rpcap_sockaddr
 /*
  * Format of an IPv4 address as sent over the wire.
  */
-#define RPCAP_AF_INET	2		/* Value on all OSes */
+#define RPCAP_AF_INET	2		/* Value on all OSes except for Haiku */
 struct rpcap_sockaddr_in
 {
 	uint16_t family;	/* Address family */
@@ -439,6 +439,6 @@ struct rpcap_sampling
 
 extern void rpcap_createhdr(struct rpcap_header *header, uint8_t ver, uint8_t type, uint16_t value, uint32_t length);
 extern const char *rpcap_msg_type_string(uint8_t type);
-extern int rpcap_senderror(SOCKET sock, SSL *ssl, uint8_t ver, uint16_t errcode, const char *error, char *errbuf);
+extern int rpcap_senderror(PCAP_SOCKET sock, SSL *ssl, uint8_t ver, uint16_t errcode, const char *error, char *errbuf);
 
 #endif

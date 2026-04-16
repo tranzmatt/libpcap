@@ -21,6 +21,10 @@
  * pcap-util.h - common code for various files
  */
 
+#ifndef pcap_util_h
+#define pcap_util_h
+
+#include <pcap/pcap-inttypes.h>
 /*
  * We use the "receiver-makes-right" approach to byte order;
  * because time is at a premium when we are writing the file.
@@ -38,6 +42,14 @@
  * ntoh[ls] aren't sufficient because we might need to swap on a big-endian
  * machine (if the file was written in little-end order).
  */
+#define SWAPLL(y)  ((((uint64_t)(y) & 0xff00000000000000ULL) >> 56) | \
+                      (((uint64_t)(y) & 0x00ff000000000000ULL) >> 40) | \
+                      (((uint64_t)(y) & 0x0000ff0000000000ULL) >> 24) | \
+                      (((uint64_t)(y) & 0x000000ff00000000ULL) >> 8)  | \
+                      (((uint64_t)(y) & 0x00000000ff000000ULL) << 8)  | \
+                      (((uint64_t)(y) & 0x0000000000ff0000ULL) << 24) | \
+                      (((uint64_t)(y) & 0x000000000000ff00ULL) << 40) | \
+                      (((uint64_t)(y) & 0x00000000000000ffULL) << 56))
 #define	SWAPLONG(y) \
     (((((u_int)(y))&0xff)<<24) | \
      ((((u_int)(y))&0xff00)<<8) | \
@@ -47,9 +59,23 @@
      ((u_short)(((((u_int)(y))&0xff)<<8) | \
                 ((((u_int)(y))&0xff00)>>8)))
 
-extern void pcap_post_process(int linktype, int swapped,
+/*
+ * Byte-swap a pcap_4_byte_aligned_uint64;
+ */
+static inline pcap_4_byte_aligned_uint64 swap_4_byte_aligned_uint64(pcap_4_byte_aligned_uint64 val)
+{
+	return (pcap_4_byte_aligned_uint64){.halves[0] = SWAPLONG(val.halves[1]), .halves[1] = SWAPLONG(val.halves[0])};
+}
+
+/*
+ * Byte-swap a pcap_4_byte_aligned_int64;
+ */
+static inline pcap_4_byte_aligned_int64 swap_4_byte_aligned_int64(pcap_4_byte_aligned_int64 val)
+{
+	return (pcap_4_byte_aligned_int64){.halves[0] = SWAPLONG(val.halves[1]), .halves[1] = SWAPLONG(val.halves[0])};
+}
+
+extern void pcapint_post_process(int linktype, int swapped,
     struct pcap_pkthdr *hdr, u_char *data);
 
-extern void fixup_pcap_pkthdr(int linktype, struct pcap_pkthdr *hdr,
-    const u_char *data);
-
+#endif // pcap_util_h

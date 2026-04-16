@@ -19,15 +19,16 @@
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 
 #ifdef _WIN32
+/* Prevent inclusion of winsock.h, which causes redefinition errors when
+ * winsock2.h is included later */
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <syslog.h>

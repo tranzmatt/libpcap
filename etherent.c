@@ -19,9 +19,7 @@
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <pcap-types.h>
 
@@ -30,8 +28,11 @@
 #include <string.h>
 
 #include "pcap-int.h"
+#include "nametoaddr.h"
 
 #include <pcap/namedb.h>
+
+#include "thread-local.h"
 
 #ifdef HAVE_OS_PROTO_H
 #include "os-proto.h"
@@ -39,18 +40,6 @@
 
 static inline int skip_space(FILE *);
 static inline int skip_line(FILE *);
-
-/* Hex digit to integer. */
-static inline u_char
-xdtoi(u_char c)
-{
-	if (c >= '0' && c <= '9')
-		return (u_char)(c - '0');
-	else if (c >= 'a' && c <= 'f')
-		return (u_char)(c - 'a' + 10);
-	else
-		return (u_char)(c - 'A' + 10);
-}
 
 /*
  * Skip linear white space (space and tab) and any CRs before LF.
@@ -83,11 +72,11 @@ skip_line(FILE *f)
 struct pcap_etherent *
 pcap_next_etherent(FILE *fp)
 {
-	register int c, i;
+	int c, i;
 	u_char d;
 	char *bp;
 	size_t namesize;
-	static struct pcap_etherent e;
+	static thread_local struct pcap_etherent e;
 
 	memset((char *)&e, 0, sizeof(e));
 	for (;;) {
@@ -109,13 +98,13 @@ pcap_next_etherent(FILE *fp)
 
 		/* must be the start of an address */
 		for (i = 0; i < 6; i += 1) {
-			d = xdtoi((u_char)c);
+			d = pcapint_xdtoi((u_char)c);
 			c = getc(fp);
 			if (c == EOF)
 				return (NULL);
 			if (PCAP_ISXDIGIT(c)) {
 				d <<= 4;
-				d |= xdtoi((u_char)c);
+				d |= pcapint_xdtoi((u_char)c);
 				c = getc(fp);
 				if (c == EOF)
 					return (NULL);

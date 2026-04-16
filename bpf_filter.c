@@ -38,9 +38,7 @@
  *	@(#)bpf.c	7.5 (Berkeley) 7/15/91
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif
 
 #include <pcap/pcap-inttypes.h>
 #include "pcap-types.h"
@@ -86,17 +84,16 @@ enum {
  */
 #if defined(SKF_AD_VLAN_TAG_PRESENT)
 u_int
-pcap_filter_with_aux_data(const struct bpf_insn *pc, const u_char *p,
+pcapint_filter_with_aux_data(const struct bpf_insn *pc, const u_char *p,
     u_int wirelen, u_int buflen, const struct pcap_bpf_aux_data *aux_data)
 #else
 u_int
-pcap_filter_with_aux_data(const struct bpf_insn *pc, const u_char *p,
+pcapint_filter_with_aux_data(const struct bpf_insn *pc, const u_char *p,
     u_int wirelen, u_int buflen, const struct pcap_bpf_aux_data *aux_data _U_)
 #endif
 {
-	register uint32_t A, X;
-	register bpf_u_int32 k;
-	uint32_t mem[BPF_MEMWORDS];
+	uint32_t A, X;
+	bpf_u_int32 k;
 
 	if (pc == 0)
 		/*
@@ -105,6 +102,7 @@ pcap_filter_with_aux_data(const struct bpf_insn *pc, const u_char *p,
 		return (u_int)-1;
 	A = 0;
 	X = 0;
+	uint32_t mem[BPF_MEMWORDS] = {0};
 	--pc;
 	for (;;) {
 		++pc;
@@ -388,10 +386,10 @@ DIAG_ON_DEFAULT_ONLY_SWITCH
 }
 
 u_int
-pcap_filter(const struct bpf_insn *pc, const u_char *p, u_int wirelen,
+pcapint_filter(const struct bpf_insn *pc, const u_char *p, u_int wirelen,
     u_int buflen)
 {
-	return pcap_filter_with_aux_data(pc, p, wirelen, buflen, NULL);
+	return pcapint_filter_with_aux_data(pc, p, wirelen, buflen, NULL);
 }
 
 /*
@@ -406,7 +404,7 @@ pcap_filter(const struct bpf_insn *pc, const u_char *p, u_int wirelen,
  * Otherwise, a bogus program could easily crash the system.
  */
 int
-pcap_validate_filter(const struct bpf_insn *f, int len)
+pcapint_validate_filter(const struct bpf_insn *f, int len)
 {
 	u_int i, from;
 	const struct bpf_insn *p;
@@ -536,11 +534,11 @@ u_int
 bpf_filter(const struct bpf_insn *pc, const u_char *p, u_int wirelen,
     u_int buflen)
 {
-	return pcap_filter(pc, p, wirelen, buflen);
+	return pcapint_filter(pc, p, wirelen, buflen);
 }
 
 int
 bpf_validate(const struct bpf_insn *f, int len)
 {
-	return pcap_validate_filter(f, len);
+	return pcapint_validate_filter(f, len);
 }

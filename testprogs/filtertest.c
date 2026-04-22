@@ -35,6 +35,7 @@ The Regents of the University of California.  All rights reserved.\n";
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <stdbool.h>
 
 #ifdef _WIN32
   #include "getopt.h"
@@ -61,11 +62,13 @@ The Regents of the University of California.  All rights reserved.\n";
 #include <sys/stat.h>
 
 #include "pcap/funcattrs.h"
+#include "pcap/bpf.h"
 
 #define MAXIMUM_SNAPLEN		262144
 #define MAX_STDIN		(64 * 1024)
-#define BPF_IMAGE_UNIMPL	"(000) unimp"
+#define BPF_IMAGE_UNIMPL	") unimp "
 #define BPF_IMAGE_ARGV		"_enumerate_bpf_image"
+#define BPF_IMAGE_FORMAT	"%-50s; 0x%04x\n"
 
 #ifdef BDEBUG
 /*
@@ -148,10 +151,10 @@ read_infile(char *fname)
 
 	fd = open(fname, O_RDONLY|O_BINARY);
 	if (fd < 0)
-		error(EX_NOINPUT, "can't open %s: %s", fname, pcap_strerror(errno));
+		error(EX_IOERR, "can't open %s: %s", fname, pcap_strerror(errno));
 
 	if (fstat(fd, &buf) < 0)
-		error(EX_NOINPUT, "can't stat %s: %s", fname, pcap_strerror(errno));
+		error(EX_IOERR, "can't stat %s: %s", fname, pcap_strerror(errno));
 
 	/*
 	 * _read(), on Windows, has an unsigned int byte count and an
@@ -161,7 +164,7 @@ read_infile(char *fname)
 	 * the end of the string.)
 	 */
 	if (buf.st_size > INT_MAX - 1)
-		error(EX_DATAERR, "%s is larger than %d bytes; that's too large", fname,
+		error(EX_IOERR, "%s is larger than %d bytes; that's too large", fname,
 		    INT_MAX - 1);
 	cp = malloc((u_int)buf.st_size + 1);
 	cmdbuf = cp;
@@ -189,7 +192,7 @@ read_stdin(void)
 		error(EX_OSERR, "%s: calloc", __func__);
 	size_t readsize = fread(buf, 1, MAX_STDIN, stdin);
 	if (! feof(stdin))
-		error(EX_DATAERR, "received more than %u bytes on stdin", MAX_STDIN);
+		error(EX_IOERR, "received more than %u bytes on stdin", MAX_STDIN);
 	if (ferror(stdin))
 		error(EX_IOERR, "failed reading from stdin after %zd bytes", readsize);
 	fclose(stdin);
@@ -218,6 +221,7 @@ error(const int status, const char *fmt, ...)
 }
 
 /* VARARGS */
+_U_
 static void
 warn(const char *fmt, ...)
 {
@@ -272,14 +276,37 @@ enumerate_bpf_image(void)
 {
 	struct bpf_insn insn = {
 		.code = 0x0000,
-		.jt = 0xab,
-		.jf = 0xcd,
-		.k = 0xabcd,
+		/*
+		 * Use small offsets to keep the resulting jump labels within
+		 * the resulting mock program.
+		 */
+		.jt = 1,
+		.jf = 0,
+		/*
+		 * Use a value of k that for lsh/rsh is a valid number of bits
+		 * and for ld/ldx/st/stx is a valid scratch memory register
+		 * number.
+		 */
+		.k = 15,
 	};
+	uint16_t found = 0;
 	do {
-		const char *image = bpf_image(&insn, 0);
-		if (strncmp(image, BPF_IMAGE_UNIMPL, sizeof(BPF_IMAGE_UNIMPL) - 1))
-			printf("%-50s; 0x%04x\n", image, insn.code);
+		if (BPF_CLASS(insn.code) != BPF_RET) {
+			const char *image = bpf_image(&insn, found);
+			if (! strstr(image, BPF_IMAGE_UNIMPL)) {
+				printf(BPF_IMAGE_FORMAT, image, insn.code);
+				found++;
+			}
+		}
+	} while (insn.code++ != UINT16_MAX);
+	do {
+		if (BPF_CLASS(insn.code) == BPF_RET) {
+			const char *image = bpf_image(&insn, found);
+			if (! strstr(image, BPF_IMAGE_UNIMPL)) {
+				printf(BPF_IMAGE_FORMAT, image, insn.code);
+				found++;
+			}
+		}
 	} while (insn.code++ != UINT16_MAX);
 }
 
@@ -296,8 +323,9 @@ main(int argc, char **argv)
 	char *insavefile = NULL;
 	int Oflag = 1;
 #ifdef __linux__
-	int lflag = 0;
+	bool lflag = false;
 #endif
+	bool qflag = false;
 	int snaplen = MAXIMUM_SNAPLEN;
 	enum {
 		NOT_SAVEFILE_FILTER,
@@ -319,7 +347,7 @@ main(int argc, char **argv)
 		program_name = argv[0];
 
 	opterr = 0;
-	while ((op = getopt(argc, argv, "hdF:gm:Os:S:lr:")) != -1) {
+	while ((op = getopt(argc, argv, "hdF:gm:Os:S:lqr:")) != -1) {
 		switch (op) {
 
 		case 'h':
@@ -356,10 +384,10 @@ main(int argc, char **argv)
 			switch (inet_pton(AF_INET, optarg, &addr)) {
 
 			case 0:
-				error(EX_DATAERR, "invalid netmask %s", optarg);
+				error(EX_USAGE, "invalid netmask %s", optarg);
 
 			case -1:
-				error(EX_DATAERR, "invalid netmask %s: %s", optarg,
+				error(EX_USAGE, "invalid netmask %s: %s", optarg,
 				    pcap_strerror(errno));
 
 			case 1:
@@ -378,7 +406,7 @@ main(int argc, char **argv)
 			if (optarg == end || *end != '\0'
 			    || long_snaplen < 0
 			    || long_snaplen > MAXIMUM_SNAPLEN)
-				error(EX_DATAERR, "invalid snaplen %s", optarg);
+				error(EX_USAGE, "invalid snaplen %s", optarg);
 			else {
 				if (snaplen == 0)
 					snaplen = MAXIMUM_SNAPLEN;
@@ -391,11 +419,15 @@ main(int argc, char **argv)
 		case 'l':
 #ifdef __linux__
 			// Enable Linux BPF extensions.
-			lflag = 1;
+			lflag = true;
 			break;
 #else
 			error(EX_USAGE, "libpcap and filtertest built without Linux BPF extensions");
 #endif
+
+		case 'q':
+			qflag = true;
+			break;
 
 		case 'S':
 			if (strcmp(optarg, "unswapped") == 0)
@@ -414,17 +446,21 @@ main(int argc, char **argv)
 
 	if (insavefile) {
 		if (dflag > 1)
-			warn("-d is a no-op with -r");
+			error(EX_USAGE, "-r is not compatible with -d");
 #ifdef BDEBUG
 		if (gflag)
-			warn("-g is a no-op with -r");
+			error(EX_USAGE, "-r is not compatible with -g");
 #endif
 #ifdef __linux__
 		if (lflag)
-			warn("-l is a no-op with -r");
+			error(EX_USAGE, "-r is not compatible with -l");
 #endif
+		if (qflag)
+			error(EX_USAGE, "-r is not compatible with -q");
 		if (Sflag != NOT_SAVEFILE_FILTER)
-			warn("-S is a no-op with -r");
+			error(EX_USAGE, "-r is not compatible with -S");
+		if (snaplen != MAXIMUM_SNAPLEN)
+			error(EX_USAGE, "-r is not compatible with -s");
 
 		char errbuf[PCAP_ERRBUF_SIZE];
 		if (NULL == (pd = pcap_open_offline(insavefile, errbuf)))
@@ -435,11 +471,13 @@ main(int argc, char **argv)
 			usage(stderr);
 			/* NOTREACHED */
 		}
+		if (dflag > 1 && qflag)
+			error(EX_USAGE, "-d is not compatible with -q");
 		int dlt = pcap_datalink_name_to_val(argv[optind]);
 		if (dlt < 0) {
 			dlt = (int)strtol(argv[optind], &p, 10);
 			if (p == argv[optind] || *p != '\0')
-				error(EX_DATAERR, "invalid data link type %s", argv[optind]);
+				error(EX_USAGE, "invalid data link type %s", argv[optind]);
 		}
 		optind++;
 
@@ -493,7 +531,7 @@ main(int argc, char **argv)
 		error(EX_DATAERR, "%s", pcap_geterr(pd));
 
 	if (!bpf_validate(fcode.bf_insns, fcode.bf_len))
-		warn("Filter doesn't pass validation");
+		error(EX_SOFTWARE, "Filter doesn't pass validation");
 
 	if (! insavefile) {
 #ifdef BDEBUG
@@ -510,7 +548,8 @@ main(int argc, char **argv)
 		}
 		printf("\n");
 #endif
-		bpf_dump(&fcode, dflag);
+		if (! qflag)
+			bpf_dump(&fcode, dflag);
 	} else {
 		struct pcap_pkthdr *h;
 		const u_char *d;
@@ -541,43 +580,52 @@ usage(FILE *f)
 #ifdef BDEBUG
 	    "g"
 #endif
-	    "O"
 #ifdef __linux__
 	    "l"
 #endif
-	    " [ -S {unswapped|swapped} ] [ -F file ] [ -m netmask]\n"
-	    "       [ -s snaplen ] dlt [ expr ]\n",
+	    "Oq] [-S {unswapped|swapped}] [-F <file>] [-m <netmask>]\n"
+	    "       [-s <snaplen>] <DLT> [<expression>]\n",
 	    program_name);
-	(void)fprintf(f, "       (print the filter program bytecode)\n");
-	(void)fprintf(f,
-	    "  or:  %s [-O] [ -F file ] [ -m netmask] -r file [ expression ]\n",
+	(void)fprintf(f, "       (compile a filter expression, validate and print the program)\n");
+	(void)fprintf(f, "  or:  %s [-O] [-F <file>] [-m <netmask>] -r <file> [<expression>]\n",
 	    program_name);
-	(void)fprintf(f, "       (print the filter program result for each packet)\n");
+	(void)fprintf(f, "       (compile a filter expression, validate the program and print the\n");
+	(void)fprintf(f, "       filtering result for each packet in the specified savefile)\n");
 	(void)fprintf(f, "  or:  %s -h\n", program_name);
 	(void)fprintf(f, "       (print the detailed help screen)\n");
 	if (f != stdout)
 		exit(EX_USAGE);
 	(void)fprintf(f, "\nOptions specific to %s:\n", program_name);
-	(void)fprintf(f, "  <dlt>           a valid DLT name, e.g. 'EN10MB'\n");
-	(void)fprintf(f, "  <expr>          a valid filter expression, e.g. 'tcp port 80'\n");
-#ifdef __linux__
-	(void)fprintf(f, "  -l              allow the use of Linux BPF extensions\n");
-#endif
+	(void)fprintf(f, "  <DLT>           a valid DLT name, e.g. 'EN10MB'\n");
+	(void)fprintf(f, "  <expression>    a valid filter expression, e.g. 'tcp port 80'\n");
 #ifdef BDEBUG
 	(void)fprintf(f, "  -g              print Graphviz dot graphs for the optimizer steps\n");
 #endif
+#ifdef __linux__
+	(void)fprintf(f, "  -l              allow the use of Linux BPF extensions\n");
+#endif
+	(void)fprintf(f, "  -m <netmask>    use this IPv4 netmask for pcap_compile(3PCAP),\n");
+	(void)fprintf(f, "                  e.g. 255.255.255.0\n");
+	(void)fprintf(f, "  -q              do not print the filter program\n");
 	(void)fprintf(f, "  -S {unswapped|swapped} generate filter code for a savefile\n");
-	(void)fprintf(f, "  -m <netmask>    use this netmask for pcap_compile(), e.g. 255.255.255.0\n");
 	(void)fprintf(f, "\n");
 	(void)fprintf(f, "Options common with tcpdump:\n");
 	(void)fprintf(f, "  -d              change output format (accumulates, one -d is implicit)\n");
-	(void)fprintf(f, "  -O              do not optimize the filter program\n");
 	(void)fprintf(f, "  -F <file>       read the filter expression from the specified file\n");
 	(void)fprintf(f, "                  (\"-\" means stdin and allows at most %u characters)\n", MAX_STDIN);
-	(void)fprintf(f, "  -s <snaplen>    set the snapshot length\n");
+	(void)fprintf(f, "  -O              do not optimize the filter program\n");
 	(void)fprintf(f, "  -r <file>       read the packets from this savefile\n");
+	(void)fprintf(f, "  -s <snaplen>    set the snapshot length (<= %u)\n", MAXIMUM_SNAPLEN);
 	(void)fprintf(f, "\nIf no filter expression is specified, it defaults to an empty string, which\n");
 	(void)fprintf(f, "accepts all packets.  If the -F option is in use, it replaces any filter\n");
 	(void)fprintf(f, "expression specified as a command-line argument.\n");
+	(void)fprintf(f, "\nExit status codes:\n");
+	(void)fprintf(f, "  %3u: All input has been succefully processed.\n", EX_OK);
+	(void)fprintf(f, "  %3u: libpcap has orderly rejected the filter.\n", EX_DATAERR);
+	(void)fprintf(f, "  %3u: libpcap has orderly rejected the savefile.\n", EX_NOINPUT);
+	(void)fprintf(f, "  %3u: Unexpected libpcap error.\n", EX_SOFTWARE);
+	(void)fprintf(f, "  %3u: Unexpected OS error.\n", EX_OSERR);
+	(void)fprintf(f, "  %3u: Unexpected I/O or file format error.\n", EX_IOERR);
+	(void)fprintf(f, "  %3u: This executable has been invoked incorrectly.\n", EX_USAGE);
 	exit(EX_OK);
 }

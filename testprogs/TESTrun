@@ -25667,6 +25667,981 @@ my @filter_accept_blocks = (
 			(017) ret      #0
 			',
 	},
+
+	{
+		name => 'not_div_by_0',
+		DLT => 'RAW',
+		# This is a regression guard: in the past this triggered a bug.
+		aliases => ['1 / (0 + 1) == 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) add      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) div      x
+			(013) st       M[2]
+			(014) ld       #0x1
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		name => 'div_by_neg_0_optimizer',
+		DLT => 'RAW',
+		aliases => ['1 / -0 == 1'],
+		# The "opt" leg of this block is a reject test.
+		opt => undef,
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ld       M[1]
+			(005) neg
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) div      x
+			(010) st       M[1]
+			(011) ld       #0x1
+			(012) st       M[2]
+			(013) ldx      M[2]
+			(014) ld       M[1]
+			(015) jeq      x                jt 16	jf 17
+			(016) ret      #262144
+			(017) ret      #0
+			',
+	},
+	{
+		name => 'div_by_0_optimizer',
+		DLT => 'RAW',
+		aliases => ['1 / (1 - 1) == 1'],
+		# The "opt" leg of this block is a reject test.
+		opt => undef,
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x1
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) sub      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) div      x
+			(013) st       M[2]
+			(014) ld       #0x1
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+
+	{
+		name => 'not_mod_by_0',
+		DLT => 'RAW',
+		# This is a regression guard: in the past this triggered a bug.
+		aliases => ['1 % (0 + 1) == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) add      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) mod      x
+			(013) st       M[2]
+			(014) ld       #0x0
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		name => 'mod_by_neg_0_optimizer',
+		DLT => 'RAW',
+		aliases => ['1 % -0 == 1'],
+		# The "opt" leg of this block is a reject test.
+		opt => undef,
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ld       M[1]
+			(005) neg
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) mod      x
+			(010) st       M[1]
+			(011) ld       #0x1
+			(012) st       M[2]
+			(013) ldx      M[2]
+			(014) ld       M[1]
+			(015) jeq      x                jt 16	jf 17
+			(016) ret      #262144
+			(017) ret      #0
+			',
+	},
+	{
+		name => 'mod_by_0_optimizer',
+		DLT => 'RAW',
+		aliases => ['1 % (1 - 1) == 1'],
+		# The "opt" leg of this block is a reject test.
+		opt => undef,
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x1
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) sub      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) mod      x
+			(013) st       M[2]
+			(014) ld       #0x1
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+
+	{
+		name => 'not_lsh_by_32',
+		DLT => 'RAW',
+		# This is a regression guard: in the past this triggered a bug.
+		aliases => ['0xFFFFFFFF << (32 - 1) == 0x80000000'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0xffffffff
+			(001) st       M[0]
+			(002) ld       #0x20
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) sub      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) lsh      x
+			(013) st       M[2]
+			(014) ld       #0x80000000
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		name => 'lsh_by_32_optimizer',
+		DLT => 'RAW',
+		aliases => ['0xFFFFFFFF << (16 + 16) == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0xffffffff
+			(001) st       M[0]
+			(002) ld       #0x10
+			(003) st       M[1]
+			(004) ld       #0x10
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) add      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) lsh      x
+			(013) st       M[2]
+			(014) ld       #0x0
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+
+	{
+		name => 'not_rsh_by_32',
+		DLT => 'RAW',
+		# This is a regression guard: in the past this triggered a bug.
+		aliases => ['0xFFFFFFFF >> (32 - 1) == 0x00000001'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0xffffffff
+			(001) st       M[0]
+			(002) ld       #0x20
+			(003) st       M[1]
+			(004) ld       #0x1
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) sub      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) rsh      x
+			(013) st       M[2]
+			(014) ld       #0x1
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		name => 'rsh_by_32_optimizer',
+		DLT => 'RAW',
+		aliases => ['0xFFFFFFFF >> (16 + 16) == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0xffffffff
+			(001) st       M[0]
+			(002) ld       #0x10
+			(003) st       M[1]
+			(004) ld       #0x10
+			(005) st       M[2]
+			(006) ldx      M[2]
+			(007) ld       M[1]
+			(008) add      x
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ld       M[0]
+			(012) rsh      x
+			(013) st       M[2]
+			(014) ld       #0x0
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[2]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+
+	# In some of the following blocks the negative value is at the
+	# beginning of the filter expression and looks like a command-line
+	# option (short or long) -- the Perl code that drives filtertest must
+	# handle this correctly.
+	{
+		name => '0_eq_0',
+		DLT => 'RAW',
+		aliases => ['0 == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) jeq      x                jt 7	jf 8
+			(007) ret      #262144
+			(008) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "0_eq_0".
+		name => 'neg_0_eq_0',
+		DLT => 'RAW',
+		aliases => ['-0 == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #0x0
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #262144
+			(011) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "0_eq_0".
+		name => 'neg_neg_0_eq_0',
+		DLT => 'RAW',
+		aliases => ['--0 == 0'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       M[0]
+			(006) neg
+			(007) st       M[0]
+			(008) ld       #0x0
+			(009) st       M[1]
+			(010) ldx      M[1]
+			(011) ld       M[0]
+			(012) jeq      x                jt 13	jf 14
+			(013) ret      #262144
+			(014) ret      #0
+			',
+	},
+
+	{
+		name => '1_eq_1',
+		DLT => 'RAW',
+		aliases => ['1 == 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x1
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) jeq      x                jt 7	jf 8
+			(007) ret      #262144
+			(008) ret      #0
+			',
+	},
+	{
+		name => 'neg_1_ne_1',
+		DLT => 'RAW',
+		aliases => ['-1 != 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #0x1
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #0
+			(011) ret      #262144
+			',
+	},
+	{
+		# This could potentially reduce to "1_eq_1".
+		name => 'neg_neg_1_eq_1',
+		DLT => 'RAW',
+		aliases => ['--1 == 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       M[0]
+			(006) neg
+			(007) st       M[0]
+			(008) ld       #0x1
+			(009) st       M[1]
+			(010) ldx      M[1]
+			(011) ld       M[0]
+			(012) jeq      x                jt 13	jf 14
+			(013) ret      #262144
+			(014) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "neg_1_ne_1".
+		name => 'neg_neg_neg_1_ne_1',
+		DLT => 'RAW',
+		aliases => ['---1 != 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       M[0]
+			(006) neg
+			(007) st       M[0]
+			(008) ld       M[0]
+			(009) neg
+			(010) st       M[0]
+			(011) ld       #0x1
+			(012) st       M[1]
+			(013) ldx      M[1]
+			(014) ld       M[0]
+			(015) jeq      x                jt 16	jf 17
+			(016) ret      #0
+			(017) ret      #262144
+			',
+	},
+
+	{
+		# Negative of INT32_MAX.
+		name => 'neg_2147483647_eq_2147483649',
+		DLT => 'RAW',
+		aliases => ['-2147483647 == 2147483649'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x7fffffff
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #0x80000001
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #262144
+			(011) ret      #0
+			',
+	},
+	{
+		# Negative of INT32_MAX + 1.
+		name => 'neg_2147483648_eq_2147483648',
+		DLT => 'RAW',
+		aliases => ['-2147483648 == 2147483648'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x80000000
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #0x80000000
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #262144
+			(011) ret      #0
+			',
+	},
+	{
+		# Negative of UINT32_MAX.
+		name => 'neg_4294967295_eq_1',
+		DLT => 'RAW',
+		aliases => ['-4294967295 == 1'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0xffffffff
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #0x1
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #262144
+			(011) ret      #0
+			',
+	},
+
+	{
+		# This could potentially reduce to "always true".
+		name => 'len_eq_len',
+		DLT => 'RAW',
+		aliases => ['len == len'],
+		opt => '
+			(000) ld       #pktlen
+			(001) tax
+			(002) jeq      x                jt 3	jf 4
+			(003) ret      #262144
+			(004) ret      #0
+			',
+		unopt => '
+			(000) ld       #pktlen
+			(001) st       M[0]
+			(002) ld       #pktlen
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) jeq      x                jt 7	jf 8
+			(007) ret      #262144
+			(008) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "len != 0".
+		name => 'neg_len_ne_len',
+		DLT => 'RAW',
+		aliases => ['-len != len'],
+		opt => '
+			(000) ld       #pktlen
+			(001) neg
+			(002) st       M[0]
+			(003) ld       #pktlen
+			(004) tax
+			(005) ld       M[0]
+			(006) jeq      x                jt 7	jf 8
+			(007) ret      #0
+			(008) ret      #262144
+			',
+		unopt => '
+			(000) ld       #pktlen
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #pktlen
+			(006) st       M[1]
+			(007) ldx      M[1]
+			(008) ld       M[0]
+			(009) jeq      x                jt 10	jf 11
+			(010) ret      #0
+			(011) ret      #262144
+			',
+	},
+	{
+		# This could potentially reduce to "len_eq_len".
+		name => 'neg_neg_len_eq_len',
+		DLT => 'RAW',
+		aliases => ['--len == len'],
+		opt => '
+			(000) ld       #pktlen
+			(001) neg
+			(002) neg
+			(003) st       M[0]
+			(004) ld       #pktlen
+			(005) tax
+			(006) ld       M[0]
+			(007) jeq      x                jt 8	jf 9
+			(008) ret      #262144
+			(009) ret      #0
+			',
+		unopt => '
+			(000) ld       #pktlen
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       M[0]
+			(006) neg
+			(007) st       M[0]
+			(008) ld       #pktlen
+			(009) st       M[1]
+			(010) ldx      M[1]
+			(011) ld       M[0]
+			(012) jeq      x                jt 13	jf 14
+			(013) ret      #262144
+			(014) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "neg_len_ne_len".
+		name => 'neg_neg_neg_len_ne_len',
+		DLT => 'RAW',
+		aliases => ['---len != len'],
+		opt => '
+			(000) ld       #pktlen
+			(001) neg
+			(002) neg
+			(003) neg
+			(004) st       M[0]
+			(005) ld       #pktlen
+			(006) tax
+			(007) ld       M[0]
+			(008) jeq      x                jt 9	jf 10
+			(009) ret      #0
+			(010) ret      #262144
+			',
+		unopt => '
+			(000) ld       #pktlen
+			(001) st       M[0]
+			(002) ld       M[0]
+			(003) neg
+			(004) st       M[0]
+			(005) ld       M[0]
+			(006) neg
+			(007) st       M[0]
+			(008) ld       M[0]
+			(009) neg
+			(010) st       M[0]
+			(011) ld       #pktlen
+			(012) st       M[1]
+			(013) ldx      M[1]
+			(014) ld       M[0]
+			(015) jeq      x                jt 16	jf 17
+			(016) ret      #0
+			(017) ret      #262144
+			',
+	},
+
+	{
+		name => 'PDA_eq_PDA',
+		DLT => 'RAW',
+		aliases => ['link[0] == link[0]'],
+		opt => '
+			(000) ldb      [0]
+			(001) tax
+			(002) jeq      x                jt 3	jf 4
+			(003) ret      #262144
+			(004) ret      #0
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ldx      M[0]
+			(003) ldb      [x + 0]
+			(004) st       M[1]
+			(005) ld       #0x0
+			(006) st       M[2]
+			(007) ldx      M[2]
+			(008) ldb      [x + 0]
+			(009) st       M[3]
+			(010) ldx      M[3]
+			(011) ld       M[1]
+			(012) jeq      x                jt 13	jf 14
+			(013) ret      #262144
+			(014) ret      #0
+			',
+	},
+	{
+		name => 'neg_PDA_ne_PDA',
+		DLT => 'RAW',
+		aliases => ['-link[0] != link[0]'],
+		opt => '
+			(000) ldb      [0]
+			(001) neg
+			(002) st       M[1]
+			(003) ldb      [0]
+			(004) tax
+			(005) ld       M[1]
+			(006) jeq      x                jt 7	jf 8
+			(007) ret      #0
+			(008) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ldx      M[0]
+			(003) ldb      [x + 0]
+			(004) st       M[1]
+			(005) ld       M[1]
+			(006) neg
+			(007) st       M[1]
+			(008) ld       #0x0
+			(009) st       M[2]
+			(010) ldx      M[2]
+			(011) ldb      [x + 0]
+			(012) st       M[3]
+			(013) ldx      M[3]
+			(014) ld       M[1]
+			(015) jeq      x                jt 16	jf 17
+			(016) ret      #0
+			(017) ret      #262144
+			',
+	},
+	{
+		# This could potentially reduce to "PDA_eq_PDA".
+		name => 'neg_neg_PDA_eq_PDA',
+		DLT => 'RAW',
+		aliases => ['--link[0] == link[0]'],
+		opt => '
+			(000) ldb      [0]
+			(001) neg
+			(002) neg
+			(003) st       M[1]
+			(004) ldb      [0]
+			(005) tax
+			(006) ld       M[1]
+			(007) jeq      x                jt 8	jf 9
+			(008) ret      #262144
+			(009) ret      #0
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ldx      M[0]
+			(003) ldb      [x + 0]
+			(004) st       M[1]
+			(005) ld       M[1]
+			(006) neg
+			(007) st       M[1]
+			(008) ld       M[1]
+			(009) neg
+			(010) st       M[1]
+			(011) ld       #0x0
+			(012) st       M[2]
+			(013) ldx      M[2]
+			(014) ldb      [x + 0]
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[1]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "neg_PDA_ne_PDA".
+		name => 'neg_neg_neg_PDA_ne_PDA',
+		DLT => 'RAW',
+		aliases => ['---link[0] != link[0]'],
+		opt => '
+			(000) ldb      [0]
+			(001) neg
+			(002) neg
+			(003) neg
+			(004) st       M[1]
+			(005) ldb      [0]
+			(006) tax
+			(007) ld       M[1]
+			(008) jeq      x                jt 9	jf 10
+			(009) ret      #0
+			(010) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x0
+			(001) st       M[0]
+			(002) ldx      M[0]
+			(003) ldb      [x + 0]
+			(004) st       M[1]
+			(005) ld       M[1]
+			(006) neg
+			(007) st       M[1]
+			(008) ld       M[1]
+			(009) neg
+			(010) st       M[1]
+			(011) ld       M[1]
+			(012) neg
+			(013) st       M[1]
+			(014) ld       #0x0
+			(015) st       M[2]
+			(016) ldx      M[2]
+			(017) ldb      [x + 0]
+			(018) st       M[3]
+			(019) ldx      M[3]
+			(020) ld       M[1]
+			(021) jeq      x                jt 22	jf 23
+			(022) ret      #0
+			(023) ret      #262144
+			',
+	},
+
+	{
+		name => 'arth_eq_arth',
+		DLT => 'RAW',
+		aliases => ['(1 + 0) == (0 + 1)'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) add      x
+			(007) st       M[1]
+			(008) ld       #0x0
+			(009) st       M[2]
+			(010) ld       #0x1
+			(011) st       M[3]
+			(012) ldx      M[3]
+			(013) ld       M[2]
+			(014) add      x
+			(015) st       M[3]
+			(016) ldx      M[3]
+			(017) ld       M[1]
+			(018) jeq      x                jt 19	jf 20
+			(019) ret      #262144
+			(020) ret      #0
+			',
+	},
+	{
+		name => 'neg_arth_ne_arth',
+		DLT => 'RAW',
+		aliases => ['-(1 + 0) != (0 + 1)'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) add      x
+			(007) st       M[1]
+			(008) ld       M[1]
+			(009) neg
+			(010) st       M[1]
+			(011) ld       #0x0
+			(012) st       M[2]
+			(013) ld       #0x1
+			(014) st       M[3]
+			(015) ldx      M[3]
+			(016) ld       M[2]
+			(017) add      x
+			(018) st       M[3]
+			(019) ldx      M[3]
+			(020) ld       M[1]
+			(021) jeq      x                jt 22	jf 23
+			(022) ret      #0
+			(023) ret      #262144
+			',
+	},
+	{
+		# This could potentially reduce to "arth_eq_arth".
+		name => 'neg_neg_arth_eq_arth',
+		DLT => 'RAW',
+		aliases => ['--(1 + 0) == (0 + 1)'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) add      x
+			(007) st       M[1]
+			(008) ld       M[1]
+			(009) neg
+			(010) st       M[1]
+			(011) ld       M[1]
+			(012) neg
+			(013) st       M[1]
+			(014) ld       #0x0
+			(015) st       M[2]
+			(016) ld       #0x1
+			(017) st       M[3]
+			(018) ldx      M[3]
+			(019) ld       M[2]
+			(020) add      x
+			(021) st       M[3]
+			(022) ldx      M[3]
+			(023) ld       M[1]
+			(024) jeq      x                jt 25	jf 26
+			(025) ret      #262144
+			(026) ret      #0
+			',
+	},
+	{
+		# This could potentially reduce to "neg_arth_ne_arth".
+		name => 'neg_neg_neg_arth_ne_arth',
+		DLT => 'RAW',
+		aliases => ['---(1 + 0) != (0 + 1)'],
+		opt => '
+			(000) ret      #262144
+			',
+		unopt => '
+			(000) ld       #0x1
+			(001) st       M[0]
+			(002) ld       #0x0
+			(003) st       M[1]
+			(004) ldx      M[1]
+			(005) ld       M[0]
+			(006) add      x
+			(007) st       M[1]
+			(008) ld       M[1]
+			(009) neg
+			(010) st       M[1]
+			(011) ld       M[1]
+			(012) neg
+			(013) st       M[1]
+			(014) ld       M[1]
+			(015) neg
+			(016) st       M[1]
+			(017) ld       #0x0
+			(018) st       M[2]
+			(019) ld       #0x1
+			(020) st       M[3]
+			(021) ldx      M[3]
+			(022) ld       M[2]
+			(023) add      x
+			(024) st       M[3]
+			(025) ldx      M[3]
+			(026) ld       M[1]
+			(027) jeq      x                jt 28	jf 29
+			(028) ret      #0
+			(029) ret      #262144
+			',
+	},
 );
 
 # In filter_apply_blocks each test block always generates two tests: optimized
@@ -27123,6 +28098,18 @@ sub errstr_rejects_all {
 	return 'expression rejects all packets';
 }
 
+sub errstr_div_by_zero {
+	return 'division by zero';
+}
+
+sub errstr_mod_by_zero {
+	return 'modulo by zero';
+}
+
+sub errstr_shift_by_more {
+	return 'shift by more than 31 bits';
+}
+
 # * name, DLT, expr, netmask and skip: same as in filter_accept_blocks above
 # * savefile: same as in filter_apply_blocks above, but the directory is one
 #   level up.
@@ -28215,6 +29202,58 @@ my @filter_reject_tests = (
 		DLT => 'PFLOG',
 		expr => 'rarp host 1.2.3.4',
 		errstr => errstr_rejects_all,
+	},
+
+	{
+		name => 'div_by_0_gencode',
+		DLT => 'RAW',
+		expr => '1 / 0 == 1',
+		errstr => errstr_div_by_zero,
+	},
+	{
+		name => 'div_by_neg_0_optimizer',
+		DLT => 'RAW',
+		expr => '1 / -0 == 1',
+		errstr => errstr_div_by_zero,
+	},
+	{
+		name => 'div_by_0_optimizer',
+		DLT => 'RAW',
+		expr => '1 / (1 - 1) == 1',
+		errstr => errstr_div_by_zero,
+	},
+
+	{
+		name => 'mod_by_0_gencode',
+		DLT => 'RAW',
+		expr => '1 % 0 == 0',
+		errstr => errstr_mod_by_zero,
+	},
+	{
+		name => 'mod_by_neg_0_optimizer',
+		DLT => 'RAW',
+		expr => '1 % -0 == 1',
+		errstr => errstr_mod_by_zero,
+	},
+	{
+		name => 'mod_by_0_optimizer',
+		DLT => 'RAW',
+		expr => '1 % (1 - 1) == 0',
+		errstr => errstr_mod_by_zero,
+	},
+
+	{
+		name => 'lsh_by_32_gencode',
+		DLT => 'RAW',
+		expr => '0xFFFFFFFF << 32 == 0',
+		errstr => errstr_shift_by_more,
+	},
+
+	{
+		name => 'rsh_by_32_gencode',
+		DLT => 'RAW',
+		expr => '0xFFFFFFFF >> 32 == 0',
+		errstr => errstr_shift_by_more,
 	},
 );
 
@@ -30248,6 +31287,294 @@ my @translate_accept_blocks = (
 		cfunc => 'PCAP_BSWAP_64',
 		aliases => ['0x1a2b3c4d5e6f7a8b'],
 		expect => '0x8b7a6f5e4d3c2b1a',
+	},
+
+	{
+		name => 'pcapint_lowest_set_bit_0',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000001',
+			'0x0af69ec5',
+		],
+		expect => '0',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_1',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000002',
+			'0xdc1b97da',
+		],
+		expect => '1',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_2',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000004',
+			'0xca2f467c',
+		],
+		expect => '2',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_3',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000008',
+			'0x9ac1e878',
+		],
+		expect => '3',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_4',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000010',
+			'0x3c38ebd0',
+		],
+		expect => '4',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_5',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000020',
+			'0xd3da1fe0',
+		],
+		expect => '5',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_6',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000040',
+			'0xa39778c0',
+		],
+		expect => '6',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_7',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000080',
+			'0x74b94b80',
+		],
+		expect => '7',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_8',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000100',
+			'0x55f48700',
+		],
+		expect => '8',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_9',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000200',
+			'0x536cda00',
+		],
+		expect => '9',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_10',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000400',
+			'0x508cac00',
+		],
+		expect => '10',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_11',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00000800',
+			'0xafae7800',
+		],
+		expect => '11',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_12',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00001000',
+			'0xf112f000',
+		],
+		expect => '12',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_13',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00002000',
+			'0x36d62000',
+		],
+		expect => '13',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_14',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00004000',
+			'0x7b104000',
+		],
+		expect => '14',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_15',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00008000',
+			'0xf1f18000',
+		],
+		expect => '15',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_16',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00010000',
+			'0x4cd70000',
+		],
+		expect => '16',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_17',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00020000',
+			'0xf41e0000',
+		],
+		expect => '17',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_18',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00040000',
+			'0x1abc0000',
+		],
+		expect => '18',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_19',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00080000',
+			'0xd1f80000',
+		],
+		expect => '19',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_20',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00100000',
+			'0x75300000',
+		],
+		expect => '20',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_21',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00200000',
+			'0x51a00000',
+		],
+		expect => '21',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_22',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00400000',
+			'0x4fc00000',
+		],
+		expect => '22',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_23',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x00800000',
+			'0x27800000',
+		],
+		expect => '23',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_24',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x01000000',
+			'0xb9000000',
+		],
+		expect => '24',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_25',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x02000000',
+			'0x72000000',
+		],
+		expect => '25',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_26',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x04000000',
+			'0x44000000',
+		],
+		expect => '26',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_27',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x08000000',
+			'0x48000000',
+		],
+		expect => '27',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_28',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x10000000',
+			'0x90000000',
+		],
+		expect => '28',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_29',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x20000000',
+			'0xe0000000',
+		],
+		expect => '29',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_30',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x40000000',
+			'0xc0000000',
+		],
+		expect => '30',
+	},
+	{
+		name => 'pcapint_lowest_set_bit_31',
+		cfunc => 'pcapint_lowest_set_bit',
+		aliases => [
+			'0x80000000',
+		],
+		expect => '31',
 	},
 );
 

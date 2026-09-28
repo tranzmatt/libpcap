@@ -3827,7 +3827,7 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 	sjset_qos->s.jt = s2 = new_stmt(cstate, BPF_LD|BPF_MEM);
 	s2->s.k = cstate->off_linkpl.reg;
 	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
+	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
 	s2->s.k = 2;
 	sappend(s, s2);
 	s2 = new_stmt(cstate, BPF_ST);
@@ -3937,10 +3937,10 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		s_roundup = new_stmt(cstate, BPF_LD|BPF_MEM);
 		s_roundup->s.k = cstate->off_linkpl.reg;
 		sappend(s, s_roundup);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
+		s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
 		s2->s.k = 3;
 		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_IMM);
+		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
 		s2->s.k = (bpf_u_int32)~3;
 		sappend(s, s2);
 		s2 = new_stmt(cstate, BPF_ST);
@@ -6564,7 +6564,8 @@ gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, int proto)
 	 * hard to find interdependency made by jump table fixup.
 	 */
 	unsigned i = 0;
-	s[i] = new_stmt(cstate, 0);	/*dummy*/
+	s[i] = new_stmt(cstate, BPF_LD|BPF_W|BPF_IMM);
+	s[i]->s.k = 0;
 	i++;
 
 	if (proto == Q_IP) {
@@ -6668,7 +6669,6 @@ gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, int proto)
 		i++;
 		/* A += X */
 		s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s[i]->s.k = 0;
 		i++;
 		/* X = A; */
 		s[i] = new_stmt(cstate, BPF_MISC|BPF_TAX);
@@ -8093,7 +8093,6 @@ gen_neg(compiler_state_t *cstate, struct arth *a_arg)
 	s = xfer_to_a(cstate, a);
 	sappend(a->s, s);
 	s = new_stmt(cstate, BPF_ALU|BPF_NEG);
-	s->s.k = 0;
 	sappend(a->s, s);
 	s = new_stmt(cstate, BPF_ST);
 	s->s.k = a->regno;
@@ -8946,7 +8945,7 @@ gen_vlan_vloffset_add(compiler_state_t *cstate, bpf_abs_offset *off,
 	s2 = new_stmt(cstate, BPF_LD|BPF_MEM);
 	s2->s.k = off->reg;
 	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
+	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
 	s2->s.k = v;
 	sappend(s, s2);
 	s2 = new_stmt(cstate, BPF_ST);
@@ -9418,7 +9417,6 @@ gen_geneve6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 		sappend(s, s1);
 
 		s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s1->s.k = 0;
 		sappend(s, s1);
 	} else {
 		s = new_stmt(cstate, BPF_LD|BPF_IMM);
@@ -9493,7 +9491,6 @@ gen_geneve_offsets(compiler_state_t *cstate)
 
 	/* Add the Geneve header length to its offset and store. */
 	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-	s1->s.k = 0;
 	sappend(s, s1);
 
 	/* Set the encapsulated type as Ethernet. Even though we may
@@ -9671,7 +9668,6 @@ gen_vxlan6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 		sappend(s, s1);
 
 		s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s1->s.k = 0;
 		sappend(s, s1);
 	} else {
 		s = new_stmt(cstate, BPF_LD|BPF_IMM);

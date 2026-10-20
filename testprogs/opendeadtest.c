@@ -29,6 +29,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <config.h>
+
 #include "varattrs.h"
 
 #include <pcap.h>
@@ -38,23 +40,15 @@
 #include <stdarg.h>
 #ifdef _WIN32
   #include "getopt.h"
-#else
-  #include <unistd.h>
-#endif
-
-#if defined(_WIN32) || defined(__QNX__)
   #include "unix.h"
 #else
-  #include <sysexits.h>
+  #include <unistd.h>
 #endif
 
 #include <errno.h>
 
 #include "pcap/funcattrs.h"
-
-#ifdef _WIN32
-  #include "portability.h"
-#endif
+#include "portability.h"
 
 #define MAXIMUM_SNAPLEN		262144
 
@@ -139,7 +133,7 @@ main(int argc, char **argv)
 		    selectable_fd);
 	}
 	pcap_close(pd);
-	return 0;
+	exit(EX_OK);
 }
 
 static void
@@ -148,7 +142,7 @@ usage(void)
 	(void)fprintf(stderr,
 	    "Usage: %s [ -s snaplen ] <DLT>\n",
 	    program_name);
-	exit(1);
+	exit(EX_USAGE);
 }
 
 /* VARARGS */

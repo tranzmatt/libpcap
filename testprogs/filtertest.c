@@ -19,6 +19,8 @@
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include <config.h>
+
 #include "varattrs.h"
 
 #ifndef lint
@@ -39,14 +41,9 @@ The Regents of the University of California.  All rights reserved.\n";
 
 #ifdef _WIN32
   #include "getopt.h"
-#else
-  #include <unistd.h>
-#endif
-
-#if defined(_WIN32) || defined(__QNX__)
   #include "unix.h"
 #else
-  #include <sysexits.h>
+  #include <unistd.h>
 #endif
 
 #include <fcntl.h>
@@ -63,6 +60,7 @@ The Regents of the University of California.  All rights reserved.\n";
 
 #include "pcap/funcattrs.h"
 #include "extract.h"
+#include "portability.h"
 
 #define MAXIMUM_SNAPLEN		262144
 #define MAX_STDIN		(64 * 1024)
@@ -96,7 +94,7 @@ static const char *program_name;
 
 /* Forwards */
 static void PCAP_NORETURN usage(FILE *);
-static void PCAP_NORETURN error(const int, const char *, ...) PCAP_PRINTFLIKE(2, 3);
+static void PCAP_NORETURN error(const int, PCAP_FORMAT_STRING(const char *), ...) PCAP_PRINTFLIKE(2, 3);
 static void warn(const char *, ...) PCAP_PRINTFLIKE(1, 2);
 
 /*

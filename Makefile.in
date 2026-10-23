@@ -376,7 +376,7 @@ EXTRA_DIST = \
 	testprogs/visopts.py \
 	testprogs/writecaptest.c
 
-TEST_DIST = `git -C "$$DIR" ls-files tests | grep -v 'tests/\..*'`
+TEST_DIST = `git -C "$$DIR" ls-files tests`
 
 RELEASE_FILES = $(COMMON_C_SRC) $(HDR) $(MAN1) $(MAN3PCAP_EXPAND) \
 	$(MAN3PCAP_NOEXPAND) $(MANFILE) $(MANMISC) $(EXTRA_DIST) \
@@ -885,4 +885,10 @@ depend:	$(GENERATED_C_SRC) $(GENHDR)
 	(cd testprogs; $(MAKE) depend)
 
 shellcheck:
-	shellcheck -f gcc -e SC2006 autogen.sh build.sh build_matrix.sh build_common.sh mkdep .ci-coverity-scan-build.sh
+	@cd "$(srcdir)" && shellcheck -f gcc -e SC2006 \
+	  autogen.sh \
+	  build_common.sh \
+	  build_matrix.sh \
+	  build.sh \
+	  mkdep \
+	  .ci-coverity-scan-build.sh

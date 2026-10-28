@@ -3,6 +3,7 @@ use strict;
 use warnings FATAL => qw(uninitialized);
 use Config;
 use File::Temp qw(tempdir);
+use File::Path qw(rmtree);
 use List::Util qw(min max sum);
 
 # TESTrun helper functions (common to all projects).
@@ -39,6 +40,12 @@ my %osnames = (
 	solaris => 'illumos/Solaris',
 );
 
+my %helpers = (
+	mp => 'use multiprocessing',
+	mt => 'use multithreading',
+	st => 'use the main thread only',
+);
+
 my $results_to_print;
 my $results_printed;
 my $max_result_digits;
@@ -47,14 +54,28 @@ my $flush_after_newline;
 my $tmpdir;
 my %config;
 
+sub get_lib_usage () {
+	my $ret = "
+TESTRUN_JOBS allows to specify the number of tester jobs (1 by default).
+
+TESTRUN_HELPER allows to specify how to run the tests (auto-detect by default):
+";
+	$ret .= "* \"$_\" -- $helpers{$_}\n" foreach sort keys %helpers;
+	return $ret;
+}
+
 sub init_tmpdir {
 	my $prefix = shift;
 	# No File::Temp->newdir() in Perl 5.8.4.
 	$tmpdir = tempdir (
 		"${prefix}_XXXXXXXX",
 		TMPDIR => 1,
-		CLEANUP => 1
+		CLEANUP => 0
 	);
+}
+
+sub remove_tmpdir () {
+	rmtree $tmpdir, 0, 1;
 }
 
 sub mytmpfile {
@@ -72,6 +93,41 @@ sub get_njobs {
 	}
 	die "ERROR: '$ENV{TESTRUN_JOBS}' is not a valid value for TESTRUN_JOBS" if ! $njobs;
 	return $njobs;
+}
+
+sub get_helper_module () {
+	# OSes where for more than one tester job "mp" performs notably better.
+	# Tested negative: Haiku, NetBSD and QNX 8.0.
+	# Not tested: AIX, GNU/Hurd, HP-UX and Windows.
+	my @mpgood = qw(
+		darwin
+		dragonfly
+		freebsd
+		linux
+		midnightbsd
+		openbsd
+		solaris
+	);
+	my $njobs = get_njobs;
+	my $h;
+	if (defined $ENV{TESTRUN_HELPER}) {
+		$h = $ENV{TESTRUN_HELPER};
+		die "Invalid TESTRUN_HELPER value '$h'." unless grep $h eq $_, keys %helpers;
+	} elsif ($njobs == 1) {
+		# For one tester job "st" incurs the least overhead and is the best choice
+		# on all OSes except Solaris 10.
+		$h = 'st';
+	} elsif (grep $^O eq $_, @mpgood) {
+		$h = 'mp';
+	} elsif ($njobs <= 4 && $Config{useithreads}) {
+		# For more than one tester job "mt" performs better than "st", but quickly
+		# degrades.
+		$h = 'mt';
+	} else {
+		# The last-resort choice.
+		$h = 'st';
+	}
+	return "TEST${h}.pm";
 }
 
 sub get_diff_flags {
@@ -195,12 +251,12 @@ sub run_skip_test {
 sub init_results_processing {
 	my $maxcols = 80;
 	$results_to_print = shift;
-	if ($Config{useithreads}) {
-		# When using threads, STDOUT becomes line-buffered on TTYs, which is
-		# not good for interactive progress monitoring.
-		STDOUT->autoflush (1) if -t STDOUT;
-		$flush_after_newline = ! -t STDOUT;
-	}
+	# When using threads, STDOUT becomes line-buffered on TTYs, which is
+	# not good for interactive progress monitoring.
+	STDOUT->autoflush (1) if -t STDOUT;
+	# When using threads, STDOUT becomes block-buffered on pipes, which is
+	# not good for CI progress monitoring.
+	$flush_after_newline = ! -t STDOUT;
 	$results_printed = 0;
 	$max_result_digits = 1 + int (log ($results_to_print) / log (10));
 	$max_results_per_line = $maxcols - 11 - 2 * $max_result_digits;
@@ -224,8 +280,6 @@ sub print_result_char {
 		$max_result_digits,
 		$results_to_print,
 		100 * $results_printed / $results_to_print;
-	# When using threads, STDOUT becomes block-buffered on pipes, which is
-	# not good for CI progress monitoring.
 	STDOUT->flush if $flush_after_newline;
 }
 

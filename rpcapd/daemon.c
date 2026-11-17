@@ -2383,14 +2383,8 @@ daemon_unpackapplyfilter(PCAP_SOCKET sockctrl, SSL *ctrl_ssl, struct session *se
 	{
 		status = rpcapd_recv(sockctrl, ctrl_ssl, (char *) &insn,
 		    sizeof(struct rpcap_filterbpf_insn), plenp, errmsgbuf);
-		if (status == -1)
-		{
-			return -1;
-		}
-		if (status == -2)
-		{
-			return -2;
-		}
+		if (status == -1 || status == -2)
+			goto free_and_return_status;
 
 		bf_insn->code = ntohs(insn.code);
 		bf_insn->jf = insn.jf;
@@ -2406,16 +2400,19 @@ daemon_unpackapplyfilter(PCAP_SOCKET sockctrl, SSL *ctrl_ssl, struct session *se
 	if (bpf_validate(bf_prog.bf_insns, bf_prog.bf_len) == 0)
 	{
 		snprintf(errmsgbuf, PCAP_ERRBUF_SIZE, "The filter contains invalid instructions");
-		return -2;
+		status = -2;
+		goto free_and_return_status;
 	}
 
 	if (pcap_setfilter(session->fp, &bf_prog))
 	{
 		snprintf(errmsgbuf, PCAP_ERRBUF_SIZE, "RPCAP error: %s", pcap_geterr(session->fp));
-		return -2;
+		status = -2;
 	}
 
-	return 0;
+free_and_return_status:
+	free(bf_prog.bf_insns);
+	return status;
 }
 
 static int
@@ -2682,7 +2679,7 @@ daemon_thrdatamain(void *ptr)
 	//
 	// Set the signal set to include just SIGUSR1, and block that
 	// signal; we only want it unblocked when we're reading
-	// packets - we dn't want any other system calls, such as
+	// packets - we don't want any other system calls, such as
 	// ones being used to send to the client or to log messages,
 	// to be interrupted.
 	//
@@ -3098,7 +3095,7 @@ static void session_close(struct session *session)
 static int
 is_url(const char *source)
 {
-	char *colonp;
+	const char *colonp;
 
 	/*
 	 * RFC 3986 says:
@@ -3120,7 +3117,7 @@ is_url(const char *source)
 	 * include colons (e.g., I think some Solaris interfaces
 	 * might).
 	 */
-	colonp = strchr(source, ':');
+	colonp = (const char *)strchr(source, ':');
 	if (colonp == NULL)
 	{
 		/*

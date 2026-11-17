@@ -208,7 +208,8 @@ rdmasniff_read(pcap_t *handle, int max_packets, pcap_handler callback, u_char *u
 		pktd = handle->buffer + wc.wr_id * RDMASNIFF_RECEIVE_SIZE;
 
 		if (handle->fcode.bf_insns == NULL ||
-		    pcapint_filter(handle->fcode.bf_insns, pktd, pkth.len, pkth.caplen)) {
+		    pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+		                   pktd, pkth.len, pkth.caplen)) {
 			callback(user, &pkth, pktd);
 			++priv->packets_recv;
 			++count;
@@ -520,7 +521,7 @@ rdmasniff_activate(pcap_t *handle)
 				 "Failed to create QP - CAP_NET_RAW may be required");
 #else
 				 /* Root permission required? Something else? */
-				 "Faile to create QP");
+				 "Failed to create QP");
 #endif
 			ret = PCAP_ERROR_PERM_DENIED;
 		} else {
@@ -740,7 +741,9 @@ rdmasniff_findalldevs(pcap_if_list_t *devlistp, char *err_str)
 		 * XXX - do the notions of "up", "running", or
 		 * "connected" apply here?
 		 */
-		if (!pcapint_add_dev(devlistp, dev_list[i]->name, 0, "RDMA sniffer", err_str)) {
+		if (!pcapint_add_dev(devlistp, dev_list[i]->name,
+		    PCAP_IF_NO_INJECT,
+		    "RDMA sniffer", err_str)) {
 			ret = PCAP_ERROR;
 			break;
 		}

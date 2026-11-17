@@ -15,13 +15,37 @@
 #include <pcap.h>
 
 #include "varattrs.h"
-#include "pcap/funcattrs.h"
 #include "portability.h"
+#include "test-util.h"
 
-int main(int argc _U_, char **argv _U_)
+/* For Solaris before 11. */
+#ifndef timeradd
+#define timeradd(a, b, result)                       \
+  do {                                               \
+    (result)->tv_sec = (a)->tv_sec + (b)->tv_sec;    \
+    (result)->tv_usec = (a)->tv_usec + (b)->tv_usec; \
+    if ((result)->tv_usec >= 1000000) {              \
+      ++(result)->tv_sec;                            \
+      (result)->tv_usec -= 1000000;                  \
+    }                                                \
+  } while (0)
+#endif /* timeradd */
+#ifndef timersub
+#define timersub(a, b, result)                       \
+  do {                                               \
+    (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;    \
+    (result)->tv_usec = (a)->tv_usec - (b)->tv_usec; \
+    if ((result)->tv_usec < 0) {                     \
+      --(result)->tv_sec;                            \
+      (result)->tv_usec += 1000000;                  \
+    }                                                \
+  } while (0)
+#endif /* timersub */
+
+int main(int argc _U_, char **argv)
 {
   pcap_if_t *alldevs;
-  int exit_status = 0;
+  int exit_status = EX_OK;
   char errbuf[PCAP_ERRBUF_SIZE+1];
 #ifdef _WIN32
   FILETIME start_ktime, start_utime, end_ktime, end_utime;
@@ -33,40 +57,32 @@ int main(int argc _U_, char **argv _U_)
   struct timeval ktime, utime, tottime;
 #endif
 
+  set_program_name(argv[0]);
+
 #ifdef _WIN32
   if (!GetProcessTimes(GetCurrentProcess(), &dummy1, &dummy2,
                        &start_ktime, &start_utime))
-  {
-    fprintf(stderr, "GetProcessTimes() fails at start\n");
-    exit(1);
-  }
+    error(EX_OSERR, "GetProcessTimes() fails at start");
   start_kticks.LowPart = start_ktime.dwLowDateTime;
   start_kticks.HighPart = start_ktime.dwHighDateTime;
   start_uticks.LowPart = start_utime.dwLowDateTime;
   start_uticks.HighPart = start_utime.dwHighDateTime;
 #else
   if (getrusage(RUSAGE_SELF, &start_rusage) == -1) {
-    fprintf(stderr, "getrusage() fails at start\n");
-    exit(1);
+    error(EX_OSERR, "getrusage() fails at start");
   }
 #endif
   for (int i = 0; i < 500; i++)
   {
     if (pcap_findalldevs(&alldevs, errbuf) == -1)
-    {
-      fprintf(stderr,"Error in pcap_findalldevs: %s\n",errbuf);
-      exit(1);
-    }
+      error(EX_OSERR, "Error in pcap_findalldevs: %s", errbuf);
     pcap_freealldevs(alldevs);
   }
 
 #ifdef _WIN32
   if (!GetProcessTimes(GetCurrentProcess(), &dummy1, &dummy2,
                        &end_ktime, &end_utime))
-  {
-    fprintf(stderr, "GetProcessTimes() fails at end\n");
-    exit(1);
-  }
+    error(EX_OSERR, "GetProcessTimes() fails at end");
   end_kticks.LowPart = end_ktime.dwLowDateTime;
   end_kticks.HighPart = end_ktime.dwHighDateTime;
   end_uticks.LowPart = end_utime.dwLowDateTime;
@@ -80,8 +96,7 @@ int main(int argc _U_, char **argv _U_)
       ((double)tottime) / 10000000.0);
 #else
   if (getrusage(RUSAGE_SELF, &end_rusage) == -1) {
-    fprintf(stderr, "getrusage() fails at end\n");
-    exit(1);
+    error(EX_OSERR, "getrusage() fails at end");
   }
   timersub(&end_rusage.ru_stime, &start_rusage.ru_stime, &ktime);
   timersub(&end_rusage.ru_utime, &start_rusage.ru_utime, &utime);

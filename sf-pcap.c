@@ -239,7 +239,7 @@ pcap_check_header(const uint8_t *magic, FILE *fp, u_int precision, char *errbuf,
 	if (magic_int != TCPDUMP_MAGIC &&
 	    magic_int != KUZNETZOV_TCPDUMP_MAGIC &&
 	    magic_int != NSEC_TCPDUMP_MAGIC) {
-		magic_int = SWAPLONG(magic_int);
+		magic_int = PCAP_BSWAP_32(magic_int);
 		if (magic_int != TCPDUMP_MAGIC &&
 		    magic_int != KUZNETZOV_TCPDUMP_MAGIC &&
 		    magic_int != NSEC_TCPDUMP_MAGIC)
@@ -271,12 +271,12 @@ pcap_check_header(const uint8_t *magic, FILE *fp, u_int precision, char *errbuf,
 	 * If it's a byte-swapped capture file, byte-swap the header.
 	 */
 	if (swapped) {
-		hdr.version_major = SWAPSHORT(hdr.version_major);
-		hdr.version_minor = SWAPSHORT(hdr.version_minor);
-		hdr.thiszone = SWAPLONG(hdr.thiszone);
-		hdr.sigfigs = SWAPLONG(hdr.sigfigs);
-		hdr.snaplen = SWAPLONG(hdr.snaplen);
-		hdr.linktype = SWAPLONG(hdr.linktype);
+		hdr.version_major = PCAP_BSWAP_16(hdr.version_major);
+		hdr.version_minor = PCAP_BSWAP_16(hdr.version_minor);
+		hdr.thiszone = PCAP_BSWAP_32(hdr.thiszone);
+		hdr.sigfigs = PCAP_BSWAP_32(hdr.sigfigs);
+		hdr.snaplen = PCAP_BSWAP_32(hdr.snaplen);
+		hdr.linktype = PCAP_BSWAP_32(hdr.linktype);
 	}
 
 	/*
@@ -484,24 +484,6 @@ pcap_check_header(const uint8_t *magic, FILE *fp, u_int precision, char *errbuf,
 }
 
 /*
- * Grow the packet buffer to the specified size.
- */
-static int
-grow_buffer(pcap_t *p, u_int bufsize)
-{
-	void *bigger_buffer;
-
-	bigger_buffer = realloc(p->buffer, bufsize);
-	if (bigger_buffer == NULL) {
-		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "out of memory");
-		return (0);
-	}
-	p->buffer = bigger_buffer;
-	p->bufsize = bufsize;
-	return (1);
-}
-
-/*
  * Read and return the next packet from the savefile.  Return the header
  * in hdr and a pointer to the contents in data.  Return 1 on success, 0
  * if there were no more packets, and -1 on an error.
@@ -542,10 +524,10 @@ pcap_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 
 	if (p->swapped) {
 		/* these were written in opposite byte order */
-		hdr->caplen = SWAPLONG(sf_hdr.caplen);
-		hdr->len = SWAPLONG(sf_hdr.len);
-		hdr->ts.tv_sec = SWAPLONG(sf_hdr.ts.tv_sec);
-		hdr->ts.tv_usec = SWAPLONG(sf_hdr.ts.tv_usec);
+		hdr->caplen = PCAP_BSWAP_32(sf_hdr.caplen);
+		hdr->len = PCAP_BSWAP_32(sf_hdr.len);
+		hdr->ts.tv_sec = PCAP_BSWAP_32(sf_hdr.ts.tv_sec);
+		hdr->ts.tv_usec = PCAP_BSWAP_32(sf_hdr.ts.tv_usec);
 	} else {
 		hdr->caplen = sf_hdr.caplen;
 		hdr->len = sf_hdr.len;
@@ -669,7 +651,7 @@ pcap_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			/*
 			 * Grow the buffer to the snapshot length.
 			 */
-			if (!grow_buffer(p, p->snapshot))
+			if (!pcapint_grow_buffer(p, p->snapshot, p->errbuf))
 				return (-1);
 		}
 
@@ -754,7 +736,7 @@ pcap_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			if (new_bufsize > (u_int)p->snapshot)
 				new_bufsize = p->snapshot;
 
-			if (!grow_buffer(p, new_bufsize))
+			if (!pcapint_grow_buffer(p, new_bufsize, p->errbuf))
 				return (-1);
 		}
 
@@ -1116,17 +1098,17 @@ pcap_dump_open_append(pcap_t *p, const char *fname)
 			}
 			break;
 
-		case SWAPLONG(TCPDUMP_MAGIC):
-		case SWAPLONG(NSEC_TCPDUMP_MAGIC):
+		case PCAP_BSWAP_32(TCPDUMP_MAGIC):
+		case PCAP_BSWAP_32(NSEC_TCPDUMP_MAGIC):
 			snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 			    "%s: different byte order, cannot append to file", fname);
 			(void)fclose(f);
 			return (NULL);
 
 		case KUZNETZOV_TCPDUMP_MAGIC:
-		case SWAPLONG(KUZNETZOV_TCPDUMP_MAGIC):
+		case PCAP_BSWAP_32(KUZNETZOV_TCPDUMP_MAGIC):
 		case NAVTEL_TCPDUMP_MAGIC:
-		case SWAPLONG(NAVTEL_TCPDUMP_MAGIC):
+		case PCAP_BSWAP_32(NAVTEL_TCPDUMP_MAGIC):
 			snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 			    "%s: not a pcap file to which we can append", fname);
 			(void)fclose(f);

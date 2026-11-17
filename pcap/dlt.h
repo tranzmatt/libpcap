@@ -121,6 +121,7 @@
  * didn't.  So it goes.
  */
 #if defined(__NetBSD__) || defined(__FreeBSD__)
+// Via __FreeBSD__ this matches MidnightBSD too.
 #ifndef DLT_SLIP_BSDOS
 #define DLT_SLIP_BSDOS	13	/* BSD/OS Serial Line IP */
 #define DLT_PPP_BSDOS	14	/* BSD/OS Point-to-point Protocol */
@@ -206,9 +207,9 @@
  */
 
 /*
- * 18 is used for DLT_PFSYNC in OpenBSD, NetBSD, DragonFly BSD and
- * macOS; don't use it for anything else.  (FreeBSD uses 121, which
- * collides with DLT_HHDLC, even though it doesn't use 18 for
+ * 18 is used for DLT_PFSYNC in OpenBSD, NetBSD, DragonFly BSD, macOS, and
+ * QNX; don't use it for anything else.  (FreeBSD and MidnightBSD use 121,
+ * which collides with DLT_HHDLC, even though it doesn't use 18 for
  * anything and doesn't appear to have ever used it for anything.)
  *
  * We define it as 18 on those platforms; it is, unfortunately, used
@@ -217,7 +218,11 @@
  * value that we assigned to LINKTYPE_PFSYNC on all remaining
  * platforms.
  */
-#if defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__APPLE__)
+#if defined(__OpenBSD__) || \
+    defined(__NetBSD__) || \
+    defined(__DragonFly__) || \
+    defined(__APPLE__) || \
+    defined(__QNX__)
 #define DLT_PFSYNC	18
 #endif
 
@@ -398,12 +403,14 @@
  * versions might not have done mapping, in which case they would
  * have written them out with a link-layer header type of 121.)
  *
+ * MidnightBSD has copied the above assignment too.
+ *
  * OpenBSD, from which pf came, however, uses 18 for DLT_PFSYNC;
  * its libpcap does no DLT_ <-> LINKTYPE_ mapping, so it would
  * write out DLT_PFSYNC dump files with use 18 as the link-layer
  * header type.
  *
- * NetBSD, DragonFly BSD, and Darwin also use 18 for DLT_PFSYNC; in
+ * NetBSD, DragonFly BSD, Darwin, and QNX also use 18 for DLT_PFSYNC; in
  * current versions, their libpcaps do DLT_ <-> LINKTYPE_ mapping,
  * mapping DLT_PFSYNC to a LINKTYPE_PFSYNC value of 246, so they
  * should write out DLT_PFSYNC dump files with 246 as the link-layer
@@ -413,9 +420,9 @@
  *
  * We'll define DLT_PFSYNC as:
  *
- *    18 on NetBSD, OpenBSD, DragonFly BSD, and Darwin;
+ *    18 on NetBSD, OpenBSD, DragonFly BSD, Darwin, and QNX;
  *
- *    121 on FreeBSD;
+ *    121 on FreeBSD and MidnightBSD;
  *
  *    246 everywhere else.
  *
@@ -445,6 +452,7 @@
  * didn't map to 246 as DLT_PFSYNC files.
  */
 #ifdef __FreeBSD__
+// Via __FreeBSD__ this matches MidnightBSD too.
 #define DLT_PFSYNC		121
 #else
 #define DLT_HHDLC		121
@@ -1276,8 +1284,20 @@
  * DLT_PFSYNC has different values on different platforms, and all of
  * them collide with something used elsewhere.  On platforms that
  * don't already define it, define it as 246.
+ *
+ * Historically this test condition has been a Boolean NOT of a Boolean OR of
+ * the test conditions for code points 18 and 121.  This will generate a
+ * compiler warning on an "everywhere else" OS if DLT_PFSYNC has already been
+ * defined before including this header.  If this problem does not exist or has
+ * a better solution, it would make more sense to test for !defined(DLT_PFSYNC)
+ * instead.
  */
-#if !defined(__FreeBSD__) && !defined(__OpenBSD__) && !defined(__NetBSD__) && !defined(__DragonFly__) && !defined(__APPLE__)
+#if !defined(__FreeBSD__) && \
+    !defined(__OpenBSD__) && \
+    !defined(__NetBSD__) && \
+    !defined(__DragonFly__) && \
+    !defined(__APPLE__) && \
+    !defined(__QNX__)
 #define DLT_PFSYNC		246
 #endif
 
@@ -1689,6 +1709,23 @@
 #define DLT_DEBUG_ONLY		303
 
 /*
+ * DECT-2020 New Radio (NR) TAP with custom metadata header prepended to
+ * standard DLT_DECT_NR MAC-layer frame.
+ * Specification at https://github.com/DSRCorporation/dect-nr-tap
+ *
+ * Requested by Edem Khadiev <edem.khadiev@dsr-corporation.com>
+ */
+#define DLT_DECT_NR_TAP		304
+
+/*
+ * Event Tracing for Windows messages v2
+ * Specification at https://www.tcpdump.org/linktypes/LINKTYPE_ETW2.html
+ *
+ * Requested by Gabriel Potter.
+ */
+#define DLT_ETW2		305
+
+/*
  * In case the code that includes this file (directly or indirectly)
  * has also included OS files that happen to define DLT_HIGH_MATCHING_MAX,
  * with a different value (perhaps because that OS hasn't picked up
@@ -1699,6 +1736,6 @@
 #undef DLT_HIGH_MATCHING_MAX
 #endif
 
-#define DLT_HIGH_MATCHING_MAX	303	/* highest value in the "matching" range */
+#define DLT_HIGH_MATCHING_MAX	305	/* highest value in the "matching" range */
 
 #endif /* !defined(lib_pcap_dlt_h) */

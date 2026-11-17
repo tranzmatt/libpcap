@@ -39,15 +39,12 @@
 
 #include <pcap.h>
 
-#include "varattrs.h"
-#include "pcap/funcattrs.h"
-
 static int ifprint(pcap_if_t *d);
-static char *iptos(bpf_u_int32 in);
+
+#include "portability.h"
+#include "test-util.h"
 
 #ifdef _WIN32
-#include "portability.h"
-
 /*
  * Generate a string for a Win32-specific error (i.e. an error generated when
  * calling a Win32 API).
@@ -90,21 +87,19 @@ getpass(const char *prompt)
    * Turn off echoing.
    */
   if (!GetConsoleMode(console_handle, &console_mode)) {
-    fprintf(stderr, "Can't get console mode: %s\n",
+    error(EX_OSERR, "Can't get console mode: %s",
             win32_strerror(GetLastError()));
-    exit(1);
   }
   save_console_mode = console_mode;
   console_mode &= ~ENABLE_ECHO_INPUT;
   if (!SetConsoleMode(console_handle, console_mode)) {
-    fprintf(stderr, "Can't set console mode: %s\n",
+    error(EX_OSERR, "Can't set console mode: %s",
             win32_strerror(GetLastError()));
-    exit(1);
   }
   if (fgets(password, sizeof password, stdin) == NULL) {
     fprintf(stderr, "\n");
     SetConsoleMode(console_handle, save_console_mode);
-    exit(1);
+    exit(EX_IOERR);
   }
   fprintf(stderr, "\n");
   SetConsoleMode(console_handle, save_console_mode);
@@ -120,13 +115,14 @@ int main(int argc, char **argv)
   pcap_if_t *alldevs;
   pcap_if_t *d;
   bpf_u_int32 net, mask;
-  int exit_status = 0;
+  int exit_status = EX_OK;
   char errbuf[PCAP_ERRBUF_SIZE+1];
   struct pcap_rmtauth auth;
   char username[128+1];
   char *p;
   char *password;
 
+  set_program_name(argv[0]);
   if (argc >= 2)
   {
     if (pcap_findalldevs_ex(argv[1], NULL, &alldevs, errbuf) == -1)
@@ -136,7 +132,7 @@ int main(int argc, char **argv)
        */
       fprintf(stderr, "User name: ");
       if (fgets(username, sizeof username, stdin) == NULL)
-        exit(1);
+        exit(EX_IOERR);
       p = strchr(username, '\n');
       if (p != NULL)
         *p = '\0';
@@ -145,24 +141,18 @@ int main(int argc, char **argv)
       auth.username = username;
       auth.password = password;
       if (pcap_findalldevs_ex(argv[1], &auth, &alldevs, errbuf) == -1)
-      {
-        fprintf(stderr,"Error in pcap_findalldevs: %s\n",errbuf);
-        exit(1);
-      }
+        error(EX_OSERR, "Error in pcap_findalldevs_ex: %s", errbuf);
     }
   }
   else
   {
     if (pcap_findalldevs(&alldevs, errbuf) == -1)
-    {
-      fprintf(stderr,"Error in pcap_findalldevs: %s\n",errbuf);
-      exit(1);
-    }
+      error(EX_OSERR, "Error in pcap_findalldevs: %s", errbuf);
   }
   for(d=alldevs;d;d=d->next)
   {
     if (!ifprint(d))
-      exit_status = 2;
+      exit_status = EX_OSERR;
   }
 
   if (alldevs != NULL)
@@ -184,13 +174,16 @@ int main(int argc, char **argv)
           strcmp(errbuf + devnamelen + 2, "no IPv4 address assigned") == 0)
         printf("Preferred device is not on an IPv4 network\n");
       else {
-        fprintf(stderr,"Error in pcap_lookupnet: %s\n",errbuf);
-        exit_status = 2;
+        warning("Error in pcap_lookupnet: %s", errbuf);
+        exit_status = EX_OSERR;
       }
     }
     else
     {
-      printf("Preferred device is on network: %s/%s\n",iptos(net), iptos(mask));
+      char netbuf[INET_ADDRSTRLEN], maskbuf[INET_ADDRSTRLEN];
+      printf("Preferred device is on network: %s/%s\n",
+        inet_ntop(AF_INET, &net, netbuf, INET_ADDRSTRLEN),
+        inet_ntop(AF_INET, &mask, maskbuf, INET_ADDRSTRLEN));
     }
   }
 
@@ -232,6 +225,14 @@ static int ifprint(pcap_if_t *d)
   }
   if (d->flags & PCAP_IF_LOOPBACK) {
     printf("%sLOOPBACK", sep);
+    sep = ", ";
+  }
+  if (d->flags & PCAP_IF_NO_CAPTURE) {
+    printf("%sNO_CAPTURE", sep);
+    sep = ", ";
+  }
+  if (d->flags & PCAP_IF_NO_INJECT) {
+    printf("%sNO_INJECT", sep);
     sep = ", ";
   }
   if (d->flags & PCAP_IF_WIRELESS) {
@@ -280,7 +281,7 @@ static int ifprint(pcap_if_t *d)
 
   for (pcap_addr_t *a = d->addresses; a; a=a->next) {
     if (a->addr == NULL) {
-      fprintf(stderr, "\tWarning: a->addr is NULL, skipping this address.\n");
+      warning("a->addr is NULL, skipping this address.");
       status = 0;
     } else {
 #if ! defined(_WIN32) && (defined(__linux__) || defined(AF_LINK))
@@ -380,18 +381,4 @@ static int ifprint(pcap_if_t *d)
   } // for
   printf("\n");
   return status;
-}
-
-/* From tcptraceroute */
-#define IPTOSBUFFERS	12
-static char *iptos(bpf_u_int32 in)
-{
-	static char output[IPTOSBUFFERS][sizeof("255.255.255.255")];
-	static short which;
-	u_char *p;
-
-	p = (u_char *)&in;
-	which = (which + 1 == IPTOSBUFFERS ? 0 : which + 1);
-	snprintf(output[which], sizeof(output[which]), "%d.%d.%d.%d", p[0], p[1], p[2], p[3]);
-	return output[which];
 }

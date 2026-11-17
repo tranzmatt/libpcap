@@ -32,65 +32,31 @@
  * be run manually under strace, to check for extra
  * calls to eventfd or close.
  */
+#include <config.h>
+
 #include <pcap.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "portability.h"
+#include "test-util.h"
+
 static pcap_t *pd;
-static char *program_name = "nonblocktest";
+static const char *program_name;
 /* Forwards */
 static void PCAP_NORETURN usage(void);
-static void PCAP_NORETURN error(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-static void warning(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-
-/* VARARGS */
-static void
-error(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-	exit(1);
-	/* NOTREACHED */
-}
-
-/* VARARGS */
-static void
-warning(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: WARNING: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-}
 
 static void
 usage(void)
 {
 	(void)fprintf(stderr, "Usage: %s [ -i interface ]\n",
 	    program_name);
-	exit(1);
+	exit(EX_USAGE);
 }
 
 static void
@@ -109,6 +75,7 @@ main(int argc, char **argv)
 	char ebuf[PCAP_ERRBUF_SIZE];
 
 	device = NULL;
+	program_name = set_program_name(argv[0]);
 	while ((op = getopt(argc, argv, "i:sptnq")) != -1) {
 		switch (op) {
 
@@ -123,9 +90,10 @@ main(int argc, char **argv)
 	}
 	if (device == NULL) {
 		if (pcap_findalldevs(&devlist, ebuf) == -1)
-			error("%s", ebuf);
+			error(EX_OSERR, "%s", ebuf);
 		if (devlist == NULL)
-			error("no interfaces available for capture");
+			error(EX_UNAVAILABLE,
+			    "no interfaces available for capture");
 		device = strdup(devlist->name);
 		warning("listening on %s", device);
 		pcap_freealldevs(devlist);
@@ -133,37 +101,39 @@ main(int argc, char **argv)
 	*ebuf = '\0';
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL)
-		error("%s", ebuf);
+		error(EX_OSERR, "%s", ebuf);
 	else if (*ebuf)
 		warning("%s", ebuf);
 	/* set nonblock before activate */
 	if (pcap_setnonblock(pd, 1, ebuf) < 0)
-		error("pcap_setnonblock failed: %s", ebuf);
+		error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
 	/* getnonblock just returns "not activated yet" */
 	ret = pcap_getnonblock(pd, ebuf);
 	if (ret != PCAP_ERROR_NOT_ACTIVATED)
-		error("pcap_getnonblock unexpectedly succeeded");
+		error(EX_SOFTWARE, "pcap_getnonblock unexpectedly succeeded");
 	if ((status = pcap_activate(pd)) < 0)
-		error("pcap_activate failed");
+		error(EX_OSERR, "pcap_activate failed");
 	ret = pcap_getnonblock(pd, ebuf);
 	if (ret != 1)
-		error( "pcap_getnonblock did not return nonblocking" );
+		error(EX_SOFTWARE, "pcap_getnonblock did not return nonblocking");
 
 	/* Set nonblock multiple times, ensure with strace that it's a noop */
 	for (i=0; i<10; i++) {
 		if (pcap_setnonblock(pd, 1, ebuf) < 0)
-			error("pcap_setnonblock failed: %s", ebuf);
+			error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
 		ret = pcap_getnonblock(pd, ebuf);
 		if (ret != 1)
-			error( "pcap_getnonblock did not return nonblocking" );
+			error(EX_SOFTWARE,
+			    "pcap_getnonblock did not return nonblocking");
 	}
 	/* Set block multiple times, ensure with strace that it's a noop */
 	for (i=0; i<10; i++) {
 		if (pcap_setnonblock(pd, 0, ebuf) < 0)
-			error("pcap_setnonblock failed: %s", ebuf);
+			error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
 		ret = pcap_getnonblock(pd, ebuf);
 		if (ret != 0)
-			error( "pcap_getnonblock did not return blocking" );
+			error(EX_SOFTWARE,
+			    "pcap_getnonblock did not return blocking");
 	}
 
 	/* Now pcap_loop forever, with a callback that
@@ -171,14 +141,14 @@ main(int argc, char **argv)
 	status = pcap_loop(pd, -1, breakme, NULL);
 	if (status != PCAP_ERROR_BREAK) {
 		if (status >= 0)
-			error("pcap_breakloop didn't cause a break");
-		error("pcap_loop failed: %s", pcap_geterr(pd));
+			error(EX_OSERR, "pcap_breakloop didn't cause a break");
+		error(EX_OSERR, "pcap_loop failed: %s", pcap_geterr(pd));
 	}
 
         /* Now test that pcap_setnonblock fails if we can't open the
          * eventfd. */
         if (pcap_setnonblock(pd, 1, ebuf) < 0)
-                error("pcap_setnonblock failed: %s", ebuf);
+                error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
         while (1) {
                 ret = open("/dev/null", O_RDONLY);
                 if (ret < 0)
@@ -186,7 +156,8 @@ main(int argc, char **argv)
         }
         ret = pcap_setnonblock(pd, 0, ebuf);
         if (ret == 0)
-                error("pcap_setnonblock succeeded even though file table is full");
+                error(EX_SOFTWARE, "pcap_setnonblock succeeded even though file table is full");
         else
                 warning("pcap_setnonblock failed as expected: %s", ebuf);
+        exit(EX_OK);
 }

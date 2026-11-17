@@ -120,10 +120,6 @@
 #include "pcap-rdmasniff.h"
 #endif
 
-#ifdef PCAP_SUPPORT_DPDK
-#include "pcap-dpdk.h"
-#endif
-
 #ifdef ENABLE_REMOTE
 #include "pcap-rpcap.h"
 #endif
@@ -538,6 +534,30 @@ pcap_free_tstamp_types(int *tstamp_type_list)
 }
 
 /*
+ * Attempt to grow the packet buffer to the specified size.
+ *
+ * p points to the pcap_t for which the buffer should be grown.
+ * bufsize is the desired new buffer size.
+ * errbuf is filled in if the attempt fails.
+ *
+ * Returns 1 on success and 0 on failure.
+ */
+int
+pcapint_grow_buffer(pcap_t *p, u_int bufsize, char *errbuf)
+{
+	void *bigger_buffer;
+
+	bigger_buffer = realloc(p->buffer, bufsize);
+	if (bigger_buffer == NULL) {
+		snprintf(errbuf, PCAP_ERRBUF_SIZE, "out of memory");
+		return (0);
+	}
+	p->buffer = bigger_buffer;
+	p->bufsize = bufsize;
+	return (1);
+}
+
+/*
  * Default one-shot callback; overridden for capture types where the
  * packet data cannot be guaranteed to be available after the callback
  * returns, so that a copy must be made.
@@ -656,9 +676,6 @@ static struct capture_source_type {
 #endif
 #ifdef PCAP_SUPPORT_RDMASNIFF
 	{ rdmasniff_findalldevs, rdmasniff_create },
-#endif
-#ifdef PCAP_SUPPORT_DPDK
-	{ pcap_dpdk_findalldevs, pcap_dpdk_create },
 #endif
 	{ NULL, NULL }
 };
@@ -1401,7 +1418,10 @@ pcapint_add_any_dev(pcap_if_list_t *devlistp, char *errbuf)
 	 * doesn't apply to the "any" device.
 	 */
 	return pcapint_add_dev(devlistp, "any",
-	    PCAP_IF_UP|PCAP_IF_RUNNING|PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
+	    PCAP_IF_UP |
+	    PCAP_IF_RUNNING |
+	    PCAP_IF_NO_INJECT |
+	    PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
 	    any_descr, errbuf);
 }
 
@@ -1571,9 +1591,6 @@ pcap_lookupnet(const char *device, bpf_u_int32 *netp, bpf_u_int32 *maskp,
 	    || strncmp(device, "netmap:", 7) == 0
 	    || strncmp(device, "vale", 4) == 0
 #endif
-#ifdef PCAP_SUPPORT_DPDK
-	    || strncmp(device, "dpdk:", 5) == 0
-#endif
 	    ) {
 		*netp = *maskp = 0;
 		return (0);
@@ -1713,7 +1730,7 @@ static int
 pcap_parse_source(const char *source, char **schemep, char **userinfop,
     char **hostp, char **portp, char **pathp, char *ebuf)
 {
-	char *colonp;
+	const char *colonp;
 	size_t scheme_len;
 	char *scheme;
 	const char *endp;
@@ -1762,7 +1779,7 @@ pcap_parse_source(const char *source, char **schemep, char **userinfop,
 	 * include colons (e.g., I think some Solaris interfaces
 	 * might).
 	 */
-	colonp = strchr(source, ':');
+	colonp = (const char *)strchr(source, ':');
 	if (colonp == NULL) {
 		/*
 		 * The source is the device to open.
@@ -2265,8 +2282,7 @@ pcapint_createsrcstr_ex(char *source _U_, int type _U_, const char *userinfo _U_
    const char *host _U_, const char *port _U_, const char *name _U_,
    unsigned char uses_ssl _U_, char *errbuf)
 {
-	pcapint_strlcpy(errbuf, "pcapint_createsrcstr_ex() is not supported",
-	    PCAP_ERRBUF_SIZE);
+	snprintf(errbuf, PCAP_ERRBUF_SIZE, "%s() is not supported", __func__);
 	return (-1);
 }
 
@@ -2274,8 +2290,7 @@ int
 pcap_createsrcstr(char *source _U_, int type _U_, const char *host _U_,
     const char *port _U_, const char *name _U_, char *errbuf)
 {
-	pcapint_strlcpy(errbuf, "pcapint_createsrcstr() is not supported",
-	    PCAP_ERRBUF_SIZE);
+	snprintf(errbuf, PCAP_ERRBUF_SIZE, "%s() is not supported", __func__);
 	return (-1);
 }
 
@@ -2284,8 +2299,7 @@ pcapint_parsesrcstr_ex(const char *source _U_, int *type _U_,
     char *userinfo _U_, char *host _U_, char *port _U_, char *name _U_,
     unsigned char *uses_ssl _U_, char *errbuf)
 {
-	pcapint_strlcpy(errbuf, "pcapint_parsesrcstr_ex() is not supported",
-	    PCAP_ERRBUF_SIZE);
+	snprintf(errbuf, PCAP_ERRBUF_SIZE, "%s() is not supported", __func__);
 	return (-1);
 }
 
@@ -2293,8 +2307,7 @@ int
 pcap_parsesrcstr(const char *source _U_, int *type _U_, char *host _U_,
     char *port _U_, char *name _U_, char *errbuf)
 {
-	pcapint_strlcpy(errbuf, "pcapint_parsesrcstr() is not supported",
-	    PCAP_ERRBUF_SIZE);
+	snprintf(errbuf, PCAP_ERRBUF_SIZE, "%s() is not supported", __func__);
 	return (-1);
 }
 
@@ -3408,6 +3421,8 @@ static struct dlt_choice dlt_choices[] = {
 	DLT_CHOICE(USER15, "Private use 15"),
 	DLT_CHOICE(EDK2_MM, "EDK II MM request serialization protocol"),
 	DLT_CHOICE(DEBUG_ONLY, "unstructured data for manual debugging only"),
+	DLT_CHOICE(DECT_NR_TAP, "DECT-2020 New Radio TAP"),
+	DLT_CHOICE(ETW2, "Event Tracing for Windows messages v2"),
 	DLT_CHOICE_SENTINEL
 };
 
@@ -3560,6 +3575,16 @@ pcap_file(pcap_t *p)
 	return (p->rfile);
 }
 
+/*
+ * This returns -1, not PCAP_ERROR, as it doesn't return arbitrary
+ * PCAP_ERROR_ return values (and can't return PCAP_WARN_ errors,
+ * as those are indistinguishable from valid file descriptors),
+ * and as some software might check only for a -1 error return.
+ *
+ * XXX - this should probably be replaced by routines to perform
+ * ioctls, socket calls, and fcntls on the descriptor on Unix-like
+ * systems; we already have calls to get and set OIDs on Windows.
+ */
 #ifdef _WIN32
 int
 pcap_fileno(pcap_t *p)
@@ -3578,7 +3603,7 @@ DIAG_OFF_NARROWING
 		return ((int)(intptr_t)p->handle);
 DIAG_ON_NARROWING
 	} else
-		return (PCAP_ERROR);
+		return (-1);
 }
 #else /* _WIN32 */
 int
@@ -3719,6 +3744,8 @@ pcap_statustostr(int errnum)
 	static thread_local char ebuf[15+10+1];
 
 	switch (errnum) {
+	case 0:
+		return ("Success");
 
 	case PCAP_WARNING:
 		return("Generic warning");
@@ -3768,7 +3795,8 @@ pcap_statustostr(int errnum)
 	case PCAP_ERROR_CAPTURE_NOTSUP:
 		return ("Packet capture is not supported on that device");
 	}
-	(void)snprintf(ebuf, sizeof ebuf, "Unknown error: %d", errnum);
+	(void)snprintf(ebuf, sizeof ebuf, "Unknown %s: %d",
+	               errnum < 0 ? "error" : "warning", errnum);
 	return(ebuf);
 }
 
@@ -4435,10 +4463,12 @@ int
 pcap_offline_filter(const struct bpf_program *fp, const struct pcap_pkthdr *h,
     const u_char *pkt)
 {
-	const struct bpf_insn *fcode = fp->bf_insns;
-
-	if (fcode != NULL)
-		return (pcapint_filter(fcode, pkt, h->len, h->caplen));
+	/*
+	 * Here .bf_insns == NULL means to reject all packets, but downstream
+	 * of pcapint_filter() it means to accept all packets.
+	 */
+	if (fp->bf_insns != NULL)
+		return (pcapint_filter(fp->bf_insns, fp->bf_len, pkt, h->len, h->caplen));
 	else
 		return (0);
 }
@@ -4655,6 +4685,13 @@ pcap_open_dead_with_tstamp_precision(int linktype, int snaplen, u_int precision)
 	if (p == NULL)
 		return NULL;
 	memset (p, 0, sizeof(*p));
+	/* This has no file descriptors/HANDLEs. */
+#ifdef _WIN32
+	p->handle = INVALID_HANDLE_VALUE;
+#else
+	p->fd = -1;
+	p->selectable_fd = -1;
+#endif
 	p->snapshot = snaplen;
 	p->linktype = linktype;
 	p->opt.tstamp_precision = precision;

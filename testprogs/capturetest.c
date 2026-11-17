@@ -27,10 +27,11 @@ static const char copyright[] _U_ =
 The Regents of the University of California.  All rights reserved.\n";
 #endif
 
+#include <config.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <limits.h>
 #ifdef _WIN32
   #include "getopt.h"
@@ -47,18 +48,14 @@ The Regents of the University of California.  All rights reserved.\n";
 
 #include "pcap/funcattrs.h"
 
-#ifdef _WIN32
-  #include "portability.h"
-#endif
+#include "portability.h"
+#include "test-util.h"
 
-static char *program_name;
+static const char *program_name;
 
 /* Forwards */
 static void countme(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void PCAP_NORETURN usage(void);
-static void PCAP_NORETURN error(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-static void warning(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-static char *copy_argv(char **);
 
 static pcap_t *pd;
 #ifndef _WIN32
@@ -104,7 +101,7 @@ int
 main(int argc, char **argv)
 {
 	int op;
-	char *cp, *cmdbuf, *device;
+	char *cmdbuf, *device;
 	long longarg;
 	char *p;
 	int timeout = 1000;
@@ -122,12 +119,10 @@ main(int argc, char **argv)
 	char ebuf[PCAP_ERRBUF_SIZE];
 	int status;
 	int packet_count;
+	int exit_status = EX_OK;
 
 	device = NULL;
-	if ((cp = strrchr(argv[0], '/')) != NULL)
-		program_name = cp + 1;
-	else
-		program_name = argv[0];
+	program_name = set_program_name(argv[0]);
 
 	opterr = 0;
 	while ((op = getopt(argc, argv, COMMAND_OPTIONS)) != -1) {
@@ -166,16 +161,19 @@ main(int argc, char **argv)
 		case 't':
 			longarg = strtol(optarg, &p, 10);
 			if (p == optarg || *p != '\0') {
-				error("Timeout value \"%s\" is not a number",
+				error(EX_USAGE,
+				    "Timeout value \"%s\" is not a number",
 				    optarg);
 				/* NOTREACHED */
 			}
 			if (longarg < 0) {
-				error("Timeout value %ld is negative", longarg);
+				error(EX_USAGE,
+				    "Timeout value %ld is negative", longarg);
 				/* NOTREACHED */
 			}
 			if (longarg > INT_MAX) {
-				error("Timeout value %ld is too large (> %d)",
+				error(EX_USAGE,
+				    "Timeout value %ld is too large (> %d)",
 				    longarg, INT_MAX);
 				/* NOTREACHED */
 			}
@@ -190,9 +188,10 @@ main(int argc, char **argv)
 
 	if (device == NULL) {
 		if (pcap_findalldevs(&devlist, ebuf) == -1)
-			error("%s", ebuf);
+			error(EX_OSERR, "%s", ebuf);
 		if (devlist == NULL)
-			error("no interfaces available for capture");
+			error(EX_UNAVAILABLE,
+			    "no interfaces available for capture");
 		device = strdup(devlist->name);
 		pcap_freealldevs(devlist);
 	}
@@ -218,34 +217,34 @@ main(int argc, char **argv)
 #endif // SA_RESTART
 
 		if (sigaction(SIGINT, &action, NULL) == -1)
-			error("Can't catch SIGINT: %s\n",
+			error(EX_OSERR, "Can't catch SIGINT: %s\n",
 			    strerror(errno));
 	}
 #endif
 
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL)
-		error("%s", ebuf);
+		error(EX_OSERR, "%s", ebuf);
 	status = pcap_set_snaplen(pd, 65535);
 	if (status != 0)
-		error("%s: pcap_set_snaplen failed: %s",
+		error(EX_OSERR, "%s: pcap_set_snaplen failed: %s",
 			    device, pcap_statustostr(status));
 	if (immediate) {
 		status = pcap_set_immediate_mode(pd, 1);
 		if (status != 0)
-			error("%s: pcap_set_immediate_mode failed: %s",
+			error(EX_OSERR, "%s: pcap_set_immediate_mode failed: %s",
 			    device, pcap_statustostr(status));
 	}
 	status = pcap_set_timeout(pd, timeout);
 	if (status != 0)
-		error("%s: pcap_set_timeout failed: %s",
+		error(EX_OSERR, "%s: pcap_set_timeout failed: %s",
 		    device, pcap_statustostr(status));
 	status = pcap_activate(pd);
 	if (status < 0) {
 		/*
 		 * pcap_activate() failed.
 		 */
-		error("%s: %s\n(%s)", device,
+		error(EX_OSERR, "%s: %s\n(%s)", device,
 		    pcap_statustostr(status), pcap_geterr(pd));
 	} else if (status > 0) {
 		/*
@@ -263,12 +262,12 @@ main(int argc, char **argv)
 	cmdbuf = copy_argv(&argv[optind]);
 
 	if (pcap_compile(pd, &fcode, cmdbuf, 1, netmask) < 0)
-		error("%s", pcap_geterr(pd));
+		error(EX_DATAERR, "%s", pcap_geterr(pd));
 
 	if (pcap_setfilter(pd, &fcode) < 0)
-		error("%s", pcap_geterr(pd));
+		error(EX_OSERR, "%s", pcap_geterr(pd));
 	if (pcap_setnonblock(pd, nonblock, ebuf) == -1)
-		error("pcap_setnonblock failed: %s", ebuf);
+		error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
 	printf("Listening on %s\n", device);
 	for (;;) {
 		packet_count = 0;
@@ -281,8 +280,7 @@ main(int argc, char **argv)
 			    status, packet_count);
 			struct pcap_stat ps;
 			if (pcap_stats(pd, &ps) < 0) {
-				(void)fprintf(stderr, "pcap_stats: %s\n",
-				    pcap_geterr(pd));
+				warning("pcap_stats: %s", pcap_geterr(pd));
 			} else {
 				printf("%d ps_recv, %d ps_drop, %d ps_ifdrop\n",
 				    ps.ps_recv, ps.ps_drop, ps.ps_ifdrop);
@@ -303,13 +301,13 @@ main(int argc, char **argv)
 		/*
 		 * Error.  Report it.
 		 */
-		(void)fprintf(stderr, "%s: pcap_dispatch: %s\n",
-		    program_name, pcap_geterr(pd));
+		warning("pcap_dispatch: %s", pcap_geterr(pd));
+		exit_status = EX_OSERR;
 	}
 	pcap_close(pd);
 	pcap_freecode(&fcode);
 	free(cmdbuf);
-	exit(status == -1 ? 1 : 0);
+	exit(exit_status);
 }
 
 static void
@@ -325,75 +323,5 @@ usage(void)
 {
 	(void)fprintf(stderr, "Usage: %s [ " USAGE_OPTIONS " ] [ -i interface ] [ -t timeout] [expression]\n",
 	    program_name);
-	exit(1);
-}
-
-/* VARARGS */
-static void
-error(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-	exit(1);
-	/* NOTREACHED */
-}
-
-/* VARARGS */
-static void
-warning(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: WARNING: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-}
-
-/*
- * Copy arg vector into a new buffer, concatenating arguments with spaces.
- */
-static char *
-copy_argv(char **argv)
-{
-	char **p;
-	size_t len = 0;
-	char *buf;
-	char *src, *dst;
-
-	p = argv;
-	if (*p == 0)
-		return 0;
-
-	while (*p)
-		len += strlen(*p++) + 1;
-
-	buf = (char *)malloc(len);
-	if (buf == NULL)
-		error("copy_argv: malloc");
-
-	p = argv;
-	dst = buf;
-	while ((src = *p++) != NULL) {
-		while ((*dst++ = *src++) != '\0')
-			;
-		dst[-1] = ' ';
-	}
-	dst[-1] = '\0';
-
-	return buf;
+	exit(EX_USAGE);
 }

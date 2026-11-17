@@ -27,63 +27,45 @@ static const char copyright[] _U_ =
 The Regents of the University of California.  All rights reserved.\n";
 #endif
 
+#include <config.h>
+
 #include <pcap.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
 
-#include "pcap/funcattrs.h"
-
-/* Forwards */
-static void PCAP_NORETURN error(PCAP_FORMAT_STRING(const char *), ...) PCAP_PRINTFLIKE(1,2);
+#include "portability.h"
+#include "test-util.h"
 
 int
 main(int argc, char **argv)
 {
 	char ebuf[PCAP_ERRBUF_SIZE];
 	pcap_t *pd;
-	int status = 0;
+	int status;
 
+	set_program_name(argv[0]);
 	if (argc != 2)
-		error("expecting exactly one command-line argument with the interface name");
+		error(EX_USAGE,
+		    "expecting exactly one command-line argument with the interface name");
 	char *ifname = argv[1];
 
 	pd = pcap_open_live(ifname, 65535, 0, 1000, ebuf);
 	if (pd == NULL) {
-		error("pcap_open_live() failed: %s",
-		    ebuf);
+		error(EX_OSERR, "pcap_open_live() failed: %s", ebuf);
 	}
 
 	status = pcap_activate(pd);
 	if (status != PCAP_ERROR_ACTIVATED) {
 		if (status == 0)
-			error("pcap_activate() of opened pcap_t succeeded");
+			error(EX_OSERR,
+			    "pcap_activate() of opened pcap_t succeeded");
 		else if (status == PCAP_ERROR)
-			error("pcap_activate() of opened pcap_t failed with %s, not PCAP_ERROR_ACTIVATED",
+			error(EX_OSERR,
+			    "pcap_activate() of opened pcap_t failed with %s, not PCAP_ERROR_ACTIVATED",
 			    pcap_geterr(pd));
 		else
-			error("pcap_activate() of opened pcap_t failed with %s, not PCAP_ERROR_ACTIVATED",
+			error(EX_OSERR,
+			    "pcap_activate() of opened pcap_t failed with %s, not PCAP_ERROR_ACTIVATED",
 			    pcap_statustostr(status));
 	}
-	return 0;
-}
-
-/* VARARGS */
-static void
-error(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "reactivatetest: ");
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-	exit(1);
-	/* NOTREACHED */
+	exit(EX_OK);
 }

@@ -64,6 +64,7 @@ DYEXT = @DYEXT@
 RPATH = @RPATH@
 DEPENDENCY_CFLAG = @DEPENDENCY_CFLAG@
 PROG=libpcap
+VER = @PACKAGE_VERSION@
 PTHREAD_LIBS=@PTHREAD_LIBS@
 BUILD_RPCAPD=@BUILD_RPCAPD@
 INSTALL_RPCAPD=@INSTALL_RPCAPD@
@@ -129,6 +130,7 @@ HDR = $(PUBHDR) \
 	ieee80211.h \
 	llc.h \
 	nametoaddr.h \
+	no_sanitize.h \
 	optimize.h \
 	pcap-common.h \
 	pcap-int.h \
@@ -151,8 +153,8 @@ GENHDR = \
 TAGFILES = \
 	$(SRC) $(HDR)
 
-CLEANFILES = $(OBJ) libpcap.a libpcap.so.`cat $(srcdir)/VERSION` \
-	$(PROG)-`cat $(srcdir)/VERSION`.tar.gz $(GENERATED_C_SRC) $(GENHDR) \
+CLEANFILES = $(OBJ) libpcap.a libpcap.so.$(VER) \
+	$(PROG)-$(VER).tar.gz $(GENERATED_C_SRC) $(GENHDR) \
 	lex.yy.c pcap-config libpcap.pc libpcap.$(DYEXT)
 
 MAN1 = pcap-config.1
@@ -262,7 +264,6 @@ EXTRA_DIST = \
 	cmake_uninstall.cmake.in \
 	cmakeconfig.h.in \
 	cmake/Modules/FindDAG.cmake \
-	cmake/Modules/Finddpdk.cmake \
 	cmake/Modules/FindFseeko.cmake \
 	cmake/Modules/FindLFS.cmake \
 	cmake/Modules/FindPacket.cmake \
@@ -302,8 +303,6 @@ EXTRA_DIST = \
 	pcap-dbus.h \
 	pcap-dll.rc \
 	pcap-dlpi.c \
-	pcap-dpdk.c \
-	pcap-dpdk.h \
 	pcap-haiku.c \
 	pcap-hurd.c \
 	pcap-int.h \
@@ -354,19 +353,24 @@ EXTRA_DIST = \
 	testprogs/Makefile.in \
 	testprogs/TESTrun \
 	testprogs/TESTlib.pm \
+	testprogs/TESTmp.pm \
 	testprogs/TESTmt.pm \
 	testprogs/TESTst.pm \
 	testprogs/activatetest.c \
 	testprogs/can_set_rfmon_test.c \
 	testprogs/capturetest.c \
+	testprogs/enumeratetest.c \
 	testprogs/filtertest.c \
 	testprogs/findalldevstest.c \
 	testprogs/findalldevstest.supp \
 	testprogs/findalldevstest-perf.c \
 	testprogs/nonblocktest.c \
+	testprogs/opendeadtest.c \
 	testprogs/opentest.c \
 	testprogs/reactivatetest.c \
 	testprogs/selpolltest.c \
+	testprogs/test-util.c \
+	testprogs/test-util.h \
 	testprogs/threadsignaltest.c \
 	testprogs/translatetest.c \
 	testprogs/unix.h \
@@ -375,7 +379,7 @@ EXTRA_DIST = \
 	testprogs/visopts.py \
 	testprogs/writecaptest.c
 
-TEST_DIST = `git -C "$$DIR" ls-files tests | grep -v 'tests/\..*'`
+TEST_DIST = `git -C "$$DIR" ls-files tests`
 
 RELEASE_FILES = $(COMMON_C_SRC) $(HDR) $(MAN1) $(MAN3PCAP_EXPAND) \
 	$(MAN3PCAP_NOEXPAND) $(MANFILE) $(MANMISC) $(EXTRA_DIST) \
@@ -392,10 +396,9 @@ shared: libpcap.$(DYEXT)
 
 libpcap.so: $(OBJ)
 	@rm -f $@
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=`sed 's/\([0-9][0-9]*\)\..*/\1/' $(srcdir)/VERSION`; \
 	@V_SHLIB_CMD@ $(LDFLAGS) @V_SHLIB_OPT@ @V_SONAME_OPT@$@.$$MAJOR_VER \
-	    -o $@.$$VER $(OBJ) $(ADDLOBJS) $(LIBS)
+	    -o $@.$(VER) $(OBJ) $(ADDLOBJS) $(LIBS)
 
 #
 # The following rule succeeds, but the result is untested.
@@ -415,12 +418,11 @@ libpcap.so: $(OBJ)
 #
 libpcap.dylib: $(OBJ)
 	rm -f libpcap*.dylib
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=A; \
 	COMPAT_VER=1; \
 	CURRENT_VER=`sed 's/[^0-9.].*$$//' $(srcdir)/VERSION`; \
 	$(CC) -dynamiclib -undefined error $(LDFLAGS) @V_LIB_LDFLAGS_FAT@ \
-	    -o libpcap.$$VER.dylib $(OBJ) $(ADDLOBJS) $(LIBS) \
+	    -o libpcap.$(VER).dylib $(OBJ) $(ADDLOBJS) $(LIBS) \
 	    -install_name $(libdir)/libpcap.$$MAJOR_VER.dylib \
 	    -compatibility_version $$COMPAT_VER \
 	    -current_version $$CURRENT_VER
@@ -646,18 +648,16 @@ install-shared: install-shared-$(DYEXT)
 install-shared-so: libpcap.so
 	[ -d $(DESTDIR)$(libdir) ] || \
 	    (mkdir -p $(DESTDIR)$(libdir); chmod 755 $(DESTDIR)$(libdir))
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=`sed 's/\([0-9][0-9]*\)\..*/\1/' $(srcdir)/VERSION`; \
-	$(INSTALL_PROGRAM) libpcap.so.$$VER $(DESTDIR)$(libdir)/libpcap.so.$$VER; \
-	ln -sf libpcap.so.$$VER $(DESTDIR)$(libdir)/libpcap.so.$$MAJOR_VER; \
+	$(INSTALL_PROGRAM) libpcap.so.$(VER) $(DESTDIR)$(libdir)/libpcap.so.$(VER); \
+	ln -sf libpcap.so.$(VER) $(DESTDIR)$(libdir)/libpcap.so.$$MAJOR_VER; \
 	ln -sf libpcap.so.$$MAJOR_VER $(DESTDIR)$(libdir)/libpcap.so
 install-shared-dylib: libpcap.dylib
 	[ -d $(DESTDIR)$(libdir) ] || \
 	    (mkdir -p $(DESTDIR)$(libdir); chmod 755 $(DESTDIR)$(libdir))
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=A; \
-	$(INSTALL_PROGRAM) libpcap.$$VER.dylib $(DESTDIR)$(libdir)/libpcap.$$VER.dylib; \
-	ln -sf libpcap.$$VER.dylib $(DESTDIR)$(libdir)/libpcap.$$MAJOR_VER.dylib; \
+	$(INSTALL_PROGRAM) libpcap.$(VER).dylib $(DESTDIR)$(libdir)/libpcap.$(VER).dylib; \
+	ln -sf libpcap.$(VER).dylib $(DESTDIR)$(libdir)/libpcap.$$MAJOR_VER.dylib; \
 	ln -sf libpcap.$$MAJOR_VER.dylib $(DESTDIR)$(libdir)/libpcap.dylib
 install-shared-sl: libpcap.sl
 	[ -d $(DESTDIR)$(libdir) ] || \
@@ -729,15 +729,13 @@ uninstall: uninstall-shared uninstall-rpcapd
 
 uninstall-shared: uninstall-shared-$(DYEXT)
 uninstall-shared-so:
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=`sed 's/\([0-9][0-9]*\)\..*/\1/' $(srcdir)/VERSION`; \
-	rm -f $(DESTDIR)$(libdir)/libpcap.so.$$VER; \
+	rm -f $(DESTDIR)$(libdir)/libpcap.so.$(VER); \
 	rm -f $(DESTDIR)$(libdir)/libpcap.so.$$MAJOR_VER; \
 	rm -f $(DESTDIR)$(libdir)/libpcap.so
 uninstall-shared-dylib:
-	VER=`cat $(srcdir)/VERSION`; \
 	MAJOR_VER=A; \
-	rm -f $(DESTDIR)$(libdir)/libpcap.$$VER.dylib; \
+	rm -f $(DESTDIR)$(libdir)/libpcap.$(VER).dylib; \
 	rm -f $(DESTDIR)$(libdir)/libpcap.$$MAJOR_VER.dylib; \
 	rm -f $(DESTDIR)$(libdir)/libpcap.dylib
 uninstall-shared-sl:
@@ -765,7 +763,8 @@ distclean: clean
 	(cd testprogs; $(MAKE) distclean)
 
 check: testprogs
-	$(PERL) $(srcdir)/testprogs/TESTrun
+	LANG=C $(PERL) $(srcdir)/testprogs/TESTrun
+	testprogs/opendeadtest EN10MB
 
 extags: $(TAGFILES)
 	ctags $(TAGFILES)
@@ -795,7 +794,7 @@ tags: $(TAGFILES)
 # git archive doesn't write one.)
 #
 releasetar:
-	@TAG=$(PROG)-`cat VERSION` && \
+	@TAG=$(PROG)-$(VER) && \
 	if [ ! -d .git ]; then echo 'Not in a git clone, stop.'; exit 1; fi && \
 	TMPTESTFILE=`mktemp -t tmptestfile_XXXXXXXX` && \
 	rm -f "$$TMPTESTFILE" && \
@@ -821,13 +820,13 @@ releasetar:
 	rm -rf "$$AUTORECONF_DIR"
 
 releasecheck: releasetar
-	@TAG=$(PROG)-`cat VERSION` && \
+	@TAG=$(PROG)-$(VER) && \
 	INSTALL_DIR=/tmp/install_"$$TAG"_$$$$ && \
 	DIR=`pwd` && \
 	cd /tmp && \
 	rm -rf "$$TAG" && \
 	rm -rf "$$INSTALL_DIR" && \
-	tar xf "$$DIR"/"$$TAG".tar.gz && \
+	tar xzf "$$DIR"/"$$TAG".tar.gz && \
 	cd "$$TAG" && \
 	echo "[$@] $$ touch .devel" && \
 	touch .devel && \
@@ -842,7 +841,7 @@ releasecheck: releasetar
 	cd .. && \
 	rm -rf "$$TAG" && \
 	rm -rf "$$INSTALL_DIR" && \
-	tar xf "$$DIR"/"$$TAG".tar.gz && \
+	tar xzf "$$DIR"/"$$TAG".tar.gz && \
 	cd "$$TAG" && \
 	echo "[$@] $$ touch .devel" && \
 	touch .devel && \
@@ -889,4 +888,10 @@ depend:	$(GENERATED_C_SRC) $(GENHDR)
 	(cd testprogs; $(MAKE) depend)
 
 shellcheck:
-	shellcheck -f gcc -e SC2006 autogen.sh build.sh build_matrix.sh build_common.sh mkdep .ci-coverity-scan-build.sh
+	@cd "$(srcdir)" && shellcheck -f gcc -e SC2006 \
+	  autogen.sh \
+	  build_common.sh \
+	  build_matrix.sh \
+	  build.sh \
+	  mkdep \
+	  .ci-coverity-scan-build.sh

@@ -51,6 +51,7 @@
 #include "pcap/sll.h"
 #include "pcap/ipnet.h"
 #include "diag-control.h"
+#include "no_sanitize.h"
 #include "pcap-util.h"
 
 #include "scanner.h"
@@ -333,16 +334,113 @@ struct addrinfo {
 #endif
 
 /*
- * A valid jump instruction code is a bitwise OR of three values and one of the
- * values is BPF_JMP.  To make sure both of the other two values are always
- * present, define a macro of two arguments and use it instead of ORing the
- * values in place.
+ * Valid BPF opcodes comprise one (e.g. BPF_ST), two (e.g. BPF_RET|BPF_K) or
+ * three (e.g. BPF_ALU|BPF_ADD|BPF_X) constants.  Even constants that are only
+ * nominally specified because they are defined to zero (e.g. BPF_K) have
+ * meaning in the source code and the ISA.  Instead of ORing the constants in
+ * place use the following two macros: so long as the code uses a correct
+ * macro, not specifying the correct number of constants will be a compile-time
+ * error.  Groups of related BPF opcodes can wrap these with their own macros
+ * to factor common parts out.
  *
- * Note that "ja L" (documented as "jmp L" in the 1993 BPF paper) does not quite
- * follow the pattern and there is no "ja x", but internally it works very much
- * like "ja #k", so JMP(BPF_JA, BPF_K) is appropriate enough.
+ * Each of the statement-specific NEW_STMT_xxx() macros wraps either new_stmt()
+ * (if the statement does not use the 'k' member) or new_stmt_k() (if it does).
+ * This likewise makes an erroneous absence or presence of 'k' a compile-time
+ * error.
  */
-#define JMP(jtype, src) (BPF_JMP | (jtype) | (src))
+#define OPCODE_2ARY(x1, x2) ((x1) | (x2))
+#define OPCODE_3ARY(x1, x2, x3) ((x1) | (x2) | (x3))
+
+/*
+ * Load instruction opcodes comprise three constants.
+ */
+#define OPCODE_LOAD(size, mode) OPCODE_3ARY(BPF_LD, (size), (mode))
+#define NEW_STMT_LD_LEN(cstate) \
+        new_stmt((cstate), OPCODE_LOAD(BPF_W, BPF_LEN))
+#define NEW_STMT_LD_IMM(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_W, BPF_IMM), (k))
+#define NEW_STMT_LD_M(cstate, regno) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_W, BPF_MEM), guard_reg((cstate), (regno)))
+#define NEW_STMT_LDB_ABS(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_B, BPF_ABS), (k))
+#define NEW_STMT_LDH_ABS(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_H, BPF_ABS), (k))
+#define NEW_STMT_LD_ABS(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_W, BPF_ABS), (k))
+#define NEW_STMT_LDB_IND(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_B, BPF_IND), (k))
+#define NEW_STMT_LDH_IND(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOAD(BPF_H, BPF_IND), (k))
+
+#define OPCODE_LOADX(size, mode) OPCODE_3ARY(BPF_LDX, (size), (mode))
+#define NEW_STMT_LDX_IMM(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOADX(BPF_W, BPF_IMM), (k))
+#define NEW_STMT_LDX_M(cstate, regno) \
+        new_stmt_k((cstate), OPCODE_LOADX(BPF_W, BPF_MEM), guard_reg((cstate), (regno)))
+#define NEW_STMT_LDXB_MSH(cstate, k) \
+        new_stmt_k((cstate), OPCODE_LOADX(BPF_B, BPF_MSH), (k))
+
+/*
+ * Store instruction opcodes are single constants.
+ */
+#define NEW_STMT_ST_M(cstate, regno) \
+        new_stmt_k((cstate), BPF_ST, guard_reg((cstate), (regno)))
+#define NEW_STMT_STX_M(cstate, regno) \
+        new_stmt_k((cstate), BPF_STX, guard_reg((cstate), (regno)))
+
+/*
+ * Branch instruction opcodes comprise two (for "ja L") or three (for
+ * everything else) constants.
+ */
+#define NEW_STMT_JA(cstate, k) \
+        new_stmt_k((cstate), OPCODE_2ARY(BPF_JMP, BPF_JA), (k))
+
+#define OPCODE_BRANCH_X(jtype) OPCODE_3ARY(BPF_JMP, (jtype), BPF_X)
+
+#define OPCODE_BRANCH_K(jtype) OPCODE_3ARY(BPF_JMP, (jtype), BPF_K)
+#define NEW_STMT_JEQ_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_BRANCH_K(BPF_JEQ), (k))
+#define NEW_STMT_JSET_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_BRANCH_K(BPF_JSET), (k))
+
+/*
+ * ALU instruction opcodes comprise two (for "neg") or three (for everything
+ * else) constants.
+ */
+#define NEW_STMT_NEG(cstate) \
+        new_stmt((cstate), OPCODE_2ARY(BPF_ALU, BPF_NEG))
+
+#define OPCODE_ALU_X(op) OPCODE_3ARY(BPF_ALU, (op), BPF_X)
+#define NEW_STMT_ADD_X(cstate) \
+        new_stmt((cstate), OPCODE_ALU_X(BPF_ADD))
+#define NEW_STMT_OR_X(cstate) \
+        new_stmt((cstate), OPCODE_ALU_X(BPF_OR))
+
+#define OPCODE_ALU_K(op) OPCODE_3ARY(BPF_ALU, (op), BPF_K)
+#define NEW_STMT_ADD_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_ALU_K(BPF_ADD), (k))
+#define NEW_STMT_MUL_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_ALU_K(BPF_MUL), (k))
+#define NEW_STMT_AND_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_ALU_K(BPF_AND), (k))
+#define NEW_STMT_OR_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_ALU_K(BPF_OR), (k))
+#define NEW_STMT_LSH_K(cstate, k) \
+        new_stmt_k((cstate), OPCODE_ALU_K(BPF_LSH), (k))
+
+/*
+ * Return instruction opcodes always comprise two constants.
+ */
+#define OPCODE_RET(rval) OPCODE_2ARY(BPF_RET, (rval))
+
+/*
+ * Miscellaneous instruction opcodes always comprise two constants.
+ */
+#define OPCODE_MISC(op) OPCODE_2ARY(BPF_MISC, (op))
+#define NEW_STMT_TAX(cstate) \
+        new_stmt((cstate), OPCODE_MISC(BPF_TAX))
+#define NEW_STMT_TXA(cstate) \
+        new_stmt((cstate), OPCODE_MISC(BPF_TXA))
 
 /*
  * "Push" the current value of the link-layer header type and link-layer
@@ -673,7 +771,11 @@ static int init_linktype(compiler_state_t *, pcap_t *);
 
 static void init_regs(compiler_state_t *);
 static int alloc_reg(compiler_state_t *);
+static int guard_reg(compiler_state_t *, const int);
 static void free_reg(compiler_state_t *, int);
+static struct arth *new_arth(compiler_state_t *);
+static void alloc_reg_arth(compiler_state_t *, struct arth *);
+static void free_reg_arth(compiler_state_t *, struct arth *);
 
 static bool initchunks_ok(compiler_state_t *cstate);
 static void *newchunk_nolongjmp(compiler_state_t *cstate, size_t);
@@ -783,7 +885,7 @@ static struct block *gen_portrange6(compiler_state_t *, uint16_t, uint16_t,
     int, int);
 static int lookup_proto(compiler_state_t *, const char *, const struct qual);
 #if !defined(NO_PROTOCHAIN)
-static struct block *gen_protochain(compiler_state_t *, bpf_u_int32, int);
+static struct block *gen_protochain(compiler_state_t *, bpf_u_int32, uint8_t);
 #endif /* !defined(NO_PROTOCHAIN) */
 static struct block *gen_proto(compiler_state_t *, bpf_u_int32, int);
 static struct slist *xfer_to_x(compiler_state_t *, const struct arth *);
@@ -924,10 +1026,18 @@ new_stmt(compiler_state_t *cstate, int code)
 	return p;
 }
 
+static inline struct slist *
+new_stmt_k(compiler_state_t *cstate, const int code, const uint32_t k)
+{
+	struct slist *ret = new_stmt(cstate, code);
+	ret->s.k = k;
+	return ret;
+}
+
 static struct block *
 gen_retblk_internal(compiler_state_t *cstate, int v)
 {
-	struct block *b = new_block(cstate, BPF_RET|BPF_K);
+	struct block *b = new_block(cstate, OPCODE_RET(BPF_K));
 
 	b->s.k = v;
 	return b;
@@ -1309,7 +1419,6 @@ pcap_compile(pcap_t *p, struct bpf_program *program,
 	compiler_state_t cstate;
 	yyscan_t scanner = NULL;
 	YY_BUFFER_STATE in_buffer = NULL;
-	u_int len;
 	int rc;
 
 	/*
@@ -1434,15 +1543,32 @@ pcap_compile(pcap_t *p, struct bpf_program *program,
 		}
 	}
 	program->bf_insns = icode_to_fcode(&cstate.ic,
-	    cstate.ic.root, &len, p->errbuf);
+	    cstate.ic.root, &program->bf_len, p->errbuf);
 	if (program->bf_insns == NULL) {
 		/* Failure */
 		rc = PCAP_ERROR;
 		goto quit;
 	}
-	program->bf_len = len;
 
-	rc = 0;  /* We're all okay */
+	/*
+	 * If the code generator and the optimizer (if involved) work
+	 * correctly, the resulting filter program is valid.  If it is invalid,
+	 * fail now to make these types of bugs easier to detect and to debug.
+	 *
+	 * This sanity check is duplicate when the result is immediately used
+	 * with pcap_setfilter(), which validates the program too.  However,
+	 * pcap_offline_filter() will just quietly reject the packet if the BPF
+	 * interpreter runs into an invalid detail.  Also the program could be
+	 * used in external code and/or at a later time and/or after being
+	 * stored in a file or transmitted over the network.
+	 */
+	if (pcapint_validate_filter(program->bf_insns, program->bf_len))
+		rc = 0; /* We're all okay */
+	else {
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+		    "%s: program validation failed", __func__);
+		rc = PCAP_ERROR;
+	}
 
 quit:
 	/*
@@ -1494,7 +1620,7 @@ pcap_freecode(struct bpf_program *program)
 {
 	program->bf_len = 0;
 	if (program->bf_insns != NULL) {
-		free((char *)program->bf_insns);
+		free(program->bf_insns);
 		program->bf_insns = NULL;
 	}
 }
@@ -1587,7 +1713,7 @@ finish_parse(compiler_state_t *cstate, struct block *p_arg)
 	 */
 	if (cstate->linktype == DLT_PPI) {
 		struct block *ppi_dlt_check = gen_cmp(cstate, OR_PACKET,
-			4, BPF_W, SWAPLONG(DLT_IEEE802_11));
+			4, BPF_W, PCAP_BSWAP_32(DLT_IEEE802_11));
 		p = gen_and(ppi_dlt_check, p);
 	}
 
@@ -1778,7 +1904,7 @@ static struct block *
 gen_jmp_k(compiler_state_t *cstate, const int jtype, const bpf_u_int32 v,
           struct slist *stmts)
 {
-	struct block *b = new_block(cstate, JMP(jtype, BPF_K));
+	struct block *b = new_block(cstate, OPCODE_BRANCH_K(jtype));
 	b->s.k = v;
 	b->stmts = stmts;
 	return b;
@@ -1791,7 +1917,7 @@ gen_jmp_k(compiler_state_t *cstate, const int jtype, const bpf_u_int32 v,
 static struct block *
 gen_jmp_x(compiler_state_t *cstate, const int jtype, struct slist *stmts)
 {
-	struct block *b = new_block(cstate, JMP(jtype, BPF_X));
+	struct block *b = new_block(cstate, OPCODE_BRANCH_X(jtype));
 	b->stmts = stmts;
 	return b;
 }
@@ -1819,15 +1945,13 @@ gen_ncmp(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
     u_int size, bpf_u_int32 mask, int jtype, int reverse,
     bpf_u_int32 v)
 {
-	struct slist *s, *s2;
+	struct slist *s;
 	struct block *b;
 
 	s = gen_load_a(cstate, offrel, offset, size);
 
 	if (mask != 0xffffffff) {
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
-		s2->s.k = mask;
-		sappend(s, s2);
+		sappend(s, NEW_STMT_AND_K(cstate, mask));
 	}
 
 	b = gen_jmp_k(cstate, jtype, v, s);
@@ -2245,7 +2369,7 @@ init_linktype(compiler_state_t *cstate, pcap_t *p)
 		break;
 
 		/* frames captured on a Juniper PPPoE service PIC
-		 * contain raw ethernet frames */
+		 * contain raw Ethernet frames */
 	case DLT_JUNIPER_PPPOE:
 	case DLT_JUNIPER_ETHER:
 		cstate->off_linkpl.constant_part = 14;
@@ -2507,16 +2631,15 @@ gen_load_absoffsetrel(compiler_state_t *cstate, struct slist *s,
 		 * variable part of the absolute offset into the X register.
 		 * Do an indirect load, to use the X register as an offset.
 		 */
-		struct slist *s2 = new_stmt(cstate, BPF_LD|BPF_IND|size);
-		s2->s.k = offset;
+		struct slist *s2 = new_stmt_k(cstate,
+		    OPCODE_LOAD(size, BPF_IND), offset);
 		sappend(s, s2);
 	} else {
 		/*
 		 * There is no variable part of the absolute offset, so
 		 * just do an absolute load.
 		 */
-		s = new_stmt(cstate, BPF_LD|BPF_ABS|size);
-		s->s.k = offset;
+		s = new_stmt_k(cstate, OPCODE_LOAD(size, BPF_ABS), offset);
 	}
 	return s;
 }
@@ -2554,8 +2677,8 @@ gen_load_absoffsetarthrel(compiler_state_t *cstate, struct slist *varpart,
 		varpart = xfer_to_x(cstate, arthpart);
 	else {
 		sappend(varpart, xfer_to_a(cstate, arthpart));
-		sappend(varpart, new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X));
-		sappend(varpart, new_stmt(cstate, BPF_MISC|BPF_TAX));
+		sappend(varpart, NEW_STMT_ADD_X(cstate));
+		sappend(varpart, NEW_STMT_TAX(cstate));
 	}
 	return gen_load_absoffsetrel(cstate, varpart, constpart, bpf_size);
 }
@@ -2664,7 +2787,7 @@ gen_load_a(compiler_state_t *cstate, const enum e_offrel offrel, u_int offset,
 static struct slist *
 gen_loadx_iphdrlen(compiler_state_t *cstate)
 {
-	struct slist *s, *s2;
+	struct slist *s;
 
 	s = gen_abs_offset_varpart(cstate, &cstate->off_linkpl);
 	if (s != NULL) {
@@ -2678,15 +2801,10 @@ gen_loadx_iphdrlen(compiler_state_t *cstate)
 		 * value in question into the A register and add to it
 		 * the value from the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-		s2->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
-		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
-		s2->s.k = 0xf;
-		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_LSH|BPF_K);
-		s2->s.k = 2;
-		sappend(s, s2);
+		sappend(s, NEW_STMT_LDB_IND(cstate,
+		    cstate->off_linkpl.constant_part + cstate->off_nl));
+		sappend(s, NEW_STMT_AND_K(cstate, 0xf));
+		sappend(s, NEW_STMT_LSH_K(cstate, 2));
 
 		/*
 		 * The A register now contains the length of the IP header.
@@ -2694,8 +2812,8 @@ gen_loadx_iphdrlen(compiler_state_t *cstate)
 		 * the link-layer payload, which is still in the X
 		 * register, and move the result into the X register.
 		 */
-		sappend(s, new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X));
-		sappend(s, new_stmt(cstate, BPF_MISC|BPF_TAX));
+		sappend(s, NEW_STMT_ADD_X(cstate));
+		sappend(s, NEW_STMT_TAX(cstate));
 	} else {
 		/*
 		 * The offset of the link-layer payload is a constant,
@@ -2709,8 +2827,8 @@ gen_loadx_iphdrlen(compiler_state_t *cstate)
 		 * cstate->off_linkpl.constant_part + cstate->off_nl from the beginning
 		 * of the raw packet data, using that addressing mode.
 		 */
-		s = new_stmt(cstate, BPF_LDX|BPF_MSH|BPF_B);
-		s->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
+		s = NEW_STMT_LDXB_MSH(cstate,
+		    cstate->off_linkpl.constant_part + cstate->off_nl);
 	}
 	return s;
 }
@@ -2725,11 +2843,8 @@ gen_loadx_iphdrlen(compiler_state_t *cstate)
 static struct block *
 gen_uncond(compiler_state_t *cstate, const u_char rsense)
 {
-	struct slist *s;
-
-	s = new_stmt(cstate, BPF_LD|BPF_IMM);
-	s->s.k = !rsense;
-	struct block *ret = gen_jmp_k(cstate, BPF_JEQ, 0, s);
+	struct block *ret = gen_jmp_k(cstate, BPF_JEQ, 0,
+	    NEW_STMT_LD_IMM(cstate, !rsense));
 	ret->meaning = rsense ? IS_TRUE : IS_FALSE;
 	return ret;
 }
@@ -2945,7 +3060,7 @@ gen_endian_linktype(compiler_state_t *cstate, u_int offset, u_int size,
     bpf_u_int32 ll_proto, int swapped)
 {
 	return (gen_cmp(cstate, OR_LINKHDR, offset, size,
-	    swapped ? SWAPLONG(ll_proto) : ll_proto));
+	    swapped ? PCAP_BSWAP_32(ll_proto) : ll_proto));
 }
 
 static struct block *
@@ -3177,11 +3292,9 @@ gen_loopback_linktype(compiler_state_t *cstate, bpf_u_int32 ll_proto)
 		b1 = gen_bsd_af_linktype_offline(cstate, 0, BPF_W, ll_proto,
 		    !cstate->bpf_pcap->swapped);
 		return (gen_or(b0, b1));
-		break;
 
 	case DLT_LOOP:
 		return (gen_bsd_af_linktype_offline(cstate, 0, BPF_W, ll_proto, 0));
-		break;
 
 	default:
 		bpf_error(cstate, ERRSTR_FUNC_VAR_INT, __func__, "linktype",
@@ -3371,7 +3484,7 @@ gen_linux_sll_linktype(compiler_state_t *cstate, bpf_u_int32 ll_proto)
 static struct slist *
 gen_load_pflog_llprefixlen(compiler_state_t *cstate)
 {
-	struct slist *s1, *s2;
+	struct slist *s1;
 
 	/*
 	 * Generate code to load the length of the pflog header into
@@ -3384,33 +3497,25 @@ gen_load_pflog_llprefixlen(compiler_state_t *cstate)
 		/*
 		 * The length is in the first byte of the header.
 		 */
-		s1 = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-		s1->s.k = 0;
+		s1 = NEW_STMT_LDB_ABS(cstate, 0);
 
 		/*
 		 * Round it up to a multiple of 4.
 		 * Add 3, and clear the lower 2 bits.
 		 */
-		s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-		s2->s.k = 3;
-		sappend(s1, s2);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
-		s2->s.k = 0xfffffffc;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_ADD_K(cstate, 3));
+		sappend(s1, NEW_STMT_AND_K(cstate, 0xfffffffc));
 
 		/*
 		 * Now allocate a register to hold that value and store
 		 * it.
 		 */
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkpl.reg;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_ST_M(cstate, cstate->off_linkpl.reg));
 
 		/*
 		 * Now move it into the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		return (s1);
 	} else
@@ -3454,21 +3559,17 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 		/*
 		 * Load the cookie.
 		 */
-		s1 = new_stmt(cstate, BPF_LD|BPF_W|BPF_ABS);
-		s1->s.k = 0;
+		s1 = NEW_STMT_LD_ABS(cstate, 0);
 
 		/*
 		 * AND it with 0xFFFFF000.
 		 */
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
-		s2->s.k = 0xFFFFF000;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_AND_K(cstate, 0xFFFFF000));
 
 		/*
 		 * Compare with 0x80211000.
 		 */
-		sjeq_avs_cookie = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-		sjeq_avs_cookie->s.k = 0x80211000;
+		sjeq_avs_cookie = NEW_STMT_JEQ_K(cstate, 0x80211000);
 		sappend(s1, sjeq_avs_cookie);
 
 		/*
@@ -3478,8 +3579,7 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 		 * the AVS header are the length of the AVS header.
 		 * That field is big-endian.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_W|BPF_ABS);
-		s2->s.k = 4;
+		s2 = NEW_STMT_LD_ABS(cstate, 4);
 		sappend(s1, s2);
 		sjeq_avs_cookie->s.jt = s2;
 
@@ -3491,8 +3591,7 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 		 * it's added to the PC, so, as we're jumping
 		 * over a single instruction, it should be 1.)
 		 */
-		sjcommon = new_stmt(cstate, JMP(BPF_JA, BPF_K));
-		sjcommon->s.k = 1;
+		sjcommon = NEW_STMT_JA(cstate, 1);
 		sappend(s1, sjcommon);
 
 		/*
@@ -3501,8 +3600,7 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 		 * into the A register.  Have the test for an AVS
 		 * header branch here if we don't have an AVS header.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_W|BPF_IMM);
-		s2->s.k = 144;
+		s2 = NEW_STMT_LD_IMM(cstate, 144);
 		sappend(s1, s2);
 		sjeq_avs_cookie->s.jf = s2;
 
@@ -3511,16 +3609,14 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 		 * it.  The code for the AVS header will jump here after
 		 * loading the length of the AVS header.
 		 */
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkhdr.reg;
+		s2 = NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg);
 		sappend(s1, s2);
 		sjcommon->s.jf = s2;
 
 		/*
 		 * Now move it into the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		return (s1);
 	} else
@@ -3530,7 +3626,7 @@ gen_load_prism_llprefixlen(compiler_state_t *cstate)
 static struct slist *
 gen_load_avs_llprefixlen(compiler_state_t *cstate)
 {
-	struct slist *s1, *s2;
+	struct slist *s1;
 
 	/*
 	 * Generate code to load the length of the AVS header into
@@ -3545,22 +3641,18 @@ gen_load_avs_llprefixlen(compiler_state_t *cstate)
 		 * the AVS header are the length of the AVS header.
 		 * That field is big-endian.
 		 */
-		s1 = new_stmt(cstate, BPF_LD|BPF_W|BPF_ABS);
-		s1->s.k = 4;
+		s1 = NEW_STMT_LD_ABS(cstate, 4);
 
 		/*
 		 * Now allocate a register to hold that value and store
 		 * it.
 		 */
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkhdr.reg;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg));
 
 		/*
 		 * Now move it into the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		return (s1);
 	} else
@@ -3570,7 +3662,7 @@ gen_load_avs_llprefixlen(compiler_state_t *cstate)
 static struct slist *
 gen_load_radiotap_llprefixlen(compiler_state_t *cstate)
 {
-	struct slist *s1, *s2;
+	struct slist *s1;
 
 	/*
 	 * Generate code to load the length of the radiotap header into
@@ -3591,37 +3683,27 @@ gen_load_radiotap_llprefixlen(compiler_state_t *cstate)
 		 * Load the high-order byte, at an offset of 3, shift it
 		 * left a byte, and put the result in the X register.
 		 */
-		s1 = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-		s1->s.k = 3;
-		s2 = new_stmt(cstate, BPF_ALU|BPF_LSH|BPF_K);
-		sappend(s1, s2);
-		s2->s.k = 8;
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		s1 = NEW_STMT_LDB_ABS(cstate, 3);
+		sappend(s1, NEW_STMT_LSH_K(cstate, 8));
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		/*
 		 * Load the next byte, at an offset of 2, and OR the
 		 * value from the X register into it.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-		sappend(s1, s2);
-		s2->s.k = 2;
-		s2 = new_stmt(cstate, BPF_ALU|BPF_OR|BPF_X);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_LDB_ABS(cstate, 2));
+		sappend(s1, NEW_STMT_OR_X(cstate));
 
 		/*
 		 * Now allocate a register to hold that value and store
 		 * it.
 		 */
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkhdr.reg;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg));
 
 		/*
 		 * Now move it into the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		return (s1);
 	} else
@@ -3640,7 +3722,7 @@ gen_load_radiotap_llprefixlen(compiler_state_t *cstate)
 static struct slist *
 gen_load_ppi_llprefixlen(compiler_state_t *cstate)
 {
-	struct slist *s1, *s2;
+	struct slist *s1;
 
 	/*
 	 * Generate code to load the length of the radiotap header
@@ -3659,37 +3741,27 @@ gen_load_ppi_llprefixlen(compiler_state_t *cstate)
 		 * Load the high-order byte, at an offset of 3, shift it
 		 * left a byte, and put the result in the X register.
 		 */
-		s1 = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-		s1->s.k = 3;
-		s2 = new_stmt(cstate, BPF_ALU|BPF_LSH|BPF_K);
-		sappend(s1, s2);
-		s2->s.k = 8;
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		s1 = NEW_STMT_LDB_ABS(cstate, 3);
+		sappend(s1, NEW_STMT_LSH_K(cstate, 8));
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		/*
 		 * Load the next byte, at an offset of 2, and OR the
 		 * value from the X register into it.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-		sappend(s1, s2);
-		s2->s.k = 2;
-		s2 = new_stmt(cstate, BPF_ALU|BPF_OR|BPF_X);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_LDB_ABS(cstate, 2));
+		sappend(s1, NEW_STMT_OR_X(cstate));
 
 		/*
 		 * Now allocate a register to hold that value and store
 		 * it.
 		 */
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkhdr.reg;
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg));
 
 		/*
 		 * Now move it into the X register.
 		 */
-		s2 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-		sappend(s1, s2);
+		sappend(s1, NEW_STMT_TAX(cstate));
 
 		return (s1);
 	} else
@@ -3751,8 +3823,8 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		 * and store it in the cstate->off_linkpl.reg register.
 		 * That length is off_outermostlinkhdr.constant_part.
 		 */
-		s = new_stmt(cstate, BPF_LDX|BPF_IMM);
-		s->s.k = cstate->off_outermostlinkhdr.constant_part;
+		s = NEW_STMT_LDX_IMM(cstate,
+		    cstate->off_outermostlinkhdr.constant_part);
 	}
 
 	/*
@@ -3762,34 +3834,26 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 	 * in cstate->off_linkpl.reg, and then load the Frame Control field,
 	 * which is at the offset in the X register, with an indexed load.
 	 */
-	s2 = new_stmt(cstate, BPF_MISC|BPF_TXA);
-	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s2->s.k = 24;
-	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ST);
-	s2->s.k = cstate->off_linkpl.reg;
-	sappend(s, s2);
+	sappend(s, NEW_STMT_TXA(cstate));
+	sappend(s, NEW_STMT_ADD_K(cstate, 24));
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkpl.reg));
 
-	s2 = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-	s2->s.k = 0;
-	sappend(s, s2);
+	sappend(s, NEW_STMT_LDB_IND(cstate, 0));
 
 	/*
 	 * Check the Frame Control field to see if this is a data frame;
 	 * a data frame has the 0x08 bit (b3) in that field set and the
 	 * 0x04 bit (b2) clear.
 	 */
-	sjset_data_frame_1 = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-	sjset_data_frame_1->s.k = IEEE80211_FC0_TYPE_DATA;
+	sjset_data_frame_1 = NEW_STMT_JSET_K(cstate, IEEE80211_FC0_TYPE_DATA);
 	sappend(s, sjset_data_frame_1);
 
 	/*
 	 * If b3 is set, test b2, otherwise go to the first statement of
 	 * the rest of the program.
 	 */
-	sjset_data_frame_1->s.jt = sjset_data_frame_2 = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-	sjset_data_frame_2->s.k = IEEE80211_FC0_TYPE_CTL;
+	sjset_data_frame_1->s.jt = sjset_data_frame_2 =
+	    NEW_STMT_JSET_K(cstate, IEEE80211_FC0_TYPE_CTL);
 	sappend(s, sjset_data_frame_2);
 	sjset_data_frame_1->s.jf = snext;
 
@@ -3799,8 +3863,8 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 	 * program.
 	 */
 	sjset_data_frame_2->s.jt = snext;
-	sjset_data_frame_2->s.jf = sjset_qos = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-	sjset_qos->s.k = IEEE80211_FC0_SUBTYPE_QOS;
+	sjset_data_frame_2->s.jf = sjset_qos =
+	    NEW_STMT_JSET_K(cstate, IEEE80211_FC0_SUBTYPE_QOS);
 	sappend(s, sjset_qos);
 
 	/*
@@ -3809,15 +3873,10 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 	 * Otherwise, go to the first statement of the rest of the
 	 * program.
 	 */
-	sjset_qos->s.jt = s2 = new_stmt(cstate, BPF_LD|BPF_MEM);
-	s2->s.k = cstate->off_linkpl.reg;
+	sjset_qos->s.jt = s2 = NEW_STMT_LD_M(cstate, cstate->off_linkpl.reg);
 	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
-	s2->s.k = 2;
-	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ST);
-	s2->s.k = cstate->off_linkpl.reg;
-	sappend(s, s2);
+	sappend(s, NEW_STMT_ADD_K(cstate, 2));
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkpl.reg));
 
 	/*
 	 * If we have a radiotap header, look at it to see whether
@@ -3843,12 +3902,11 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		 * Is the IEEE80211_RADIOTAP_FLAGS bit (0x0000002) set
 		 * in the first presence flag word?
 		 */
-		sjset_qos->s.jf = s2 = new_stmt(cstate, BPF_LD|BPF_ABS|BPF_W);
-		s2->s.k = 4;
+		sjset_qos->s.jf = s2 = NEW_STMT_LD_ABS(cstate, 4);
 		sappend(s, s2);
 
-		sjset_radiotap_flags_present = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-		sjset_radiotap_flags_present->s.k = SWAPLONG(0x00000002);
+		sjset_radiotap_flags_present =
+		    NEW_STMT_JSET_K(cstate, PCAP_BSWAP_32(0x00000002));
 		sappend(s, sjset_radiotap_flags_present);
 
 		/*
@@ -3859,8 +3917,8 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		/*
 		 * Otherwise, is the "extension" bit set in that word?
 		 */
-		sjset_radiotap_ext_present = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-		sjset_radiotap_ext_present->s.k = SWAPLONG(0x80000000);
+		sjset_radiotap_ext_present =
+		    NEW_STMT_JSET_K(cstate, PCAP_BSWAP_32(0x80000000));
 		sappend(s, sjset_radiotap_ext_present);
 		sjset_radiotap_flags_present->s.jt = sjset_radiotap_ext_present;
 
@@ -3872,8 +3930,8 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		/*
 		 * Otherwise, is the IEEE80211_RADIOTAP_TSFT bit set?
 		 */
-		sjset_radiotap_tsft_present = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-		sjset_radiotap_tsft_present->s.k = SWAPLONG(0x00000001);
+		sjset_radiotap_tsft_present =
+		    NEW_STMT_JSET_K(cstate, PCAP_BSWAP_32(0x00000001));
 		sappend(s, sjset_radiotap_tsft_present);
 		sjset_radiotap_ext_present->s.jf = sjset_radiotap_tsft_present;
 
@@ -3886,13 +3944,11 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		 * Test whether the IEEE80211_RADIOTAP_F_DATAPAD bit (0x20)
 		 * is set.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_ABS|BPF_B);
-		s2->s.k = 16;
+		s2 = NEW_STMT_LDB_ABS(cstate, 16);
 		sappend(s, s2);
 		sjset_radiotap_tsft_present->s.jt = s2;
 
-		sjset_tsft_datapad = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-		sjset_tsft_datapad->s.k = 0x20;
+		sjset_tsft_datapad = NEW_STMT_JSET_K(cstate, 0x20);
 		sappend(s, sjset_tsft_datapad);
 
 		/*
@@ -3903,13 +3959,11 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		 * Test whether the IEEE80211_RADIOTAP_F_DATAPAD bit (0x20)
 		 * is set.
 		 */
-		s2 = new_stmt(cstate, BPF_LD|BPF_ABS|BPF_B);
-		s2->s.k = 8;
+		s2 = NEW_STMT_LDB_ABS(cstate, 8);
 		sappend(s, s2);
 		sjset_radiotap_tsft_present->s.jf = s2;
 
-		sjset_notsft_datapad = new_stmt(cstate, JMP(BPF_JSET, BPF_K));
-		sjset_notsft_datapad->s.k = 0x20;
+		sjset_notsft_datapad = NEW_STMT_JSET_K(cstate, 0x20);
 		sappend(s, sjset_notsft_datapad);
 
 		/*
@@ -3919,18 +3973,11 @@ gen_load_802_11_header_len(compiler_state_t *cstate, struct slist *s, struct sli
 		 * dividing by and multiplying by 4, which we do by
 		 * ANDing with ~3.
 		 */
-		s_roundup = new_stmt(cstate, BPF_LD|BPF_MEM);
-		s_roundup->s.k = cstate->off_linkpl.reg;
+		s_roundup = NEW_STMT_LD_M(cstate, cstate->off_linkpl.reg);
 		sappend(s, s_roundup);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
-		s2->s.k = 3;
-		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_IMM);
-		s2->s.k = (bpf_u_int32)~3;
-		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkpl.reg;
-		sappend(s, s2);
+		sappend(s, NEW_STMT_ADD_K(cstate, 3));
+		sappend(s, NEW_STMT_AND_K(cstate, (bpf_u_int32)~3));
+		sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkpl.reg));
 
 		sjset_tsft_datapad->s.jt = s_roundup;
 		sjset_tsft_datapad->s.jf = snext;
@@ -4021,21 +4068,14 @@ insert_compute_vloffsets(compiler_state_t *cstate, struct block *b)
 	 * length offsets for VLAN, initialize them to zero
 	 */
 	if (s == NULL && cstate->is_vlan_vloffset) {
-		struct slist *s2;
-
 		if (cstate->off_linkpl.reg == -1)
 			cstate->off_linkpl.reg = alloc_reg(cstate);
 		if (cstate->off_linktype.reg == -1)
 			cstate->off_linktype.reg = alloc_reg(cstate);
 
-		s = new_stmt(cstate, BPF_LD|BPF_W|BPF_IMM);
-		s->s.k = 0;
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linkpl.reg;
-		sappend(s, s2);
-		s2 = new_stmt(cstate, BPF_ST);
-		s2->s.k = cstate->off_linktype.reg;
-		sappend(s, s2);
+		s = NEW_STMT_LD_IMM(cstate, 0);
+		sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkpl.reg));
+		sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linktype.reg));
 	}
 
 	/*
@@ -4063,8 +4103,6 @@ insert_compute_vloffsets(compiler_state_t *cstate, struct block *b)
 static struct slist *
 gen_abs_offset_varpart(compiler_state_t *cstate, bpf_abs_offset *off)
 {
-	struct slist *s;
-
 	if (off->is_variable) {
 		if (off->reg == -1) {
 			/*
@@ -4079,9 +4117,7 @@ gen_abs_offset_varpart(compiler_state_t *cstate, bpf_abs_offset *off)
 		 * Load the register containing the variable part of the
 		 * offset of the link-layer header into the X register.
 		 */
-		s = new_stmt(cstate, BPF_LDX|BPF_MEM);
-		s->s.k = off->reg;
-		return s;
+		return NEW_STMT_LDX_M(cstate, off->reg);
 	} else {
 		/*
 		 * That offset isn't variable, there's no variable part,
@@ -4547,7 +4583,7 @@ gen_linktype(compiler_state_t *cstate, bpf_u_int32 ll_proto)
 	 * to tell only the address family of the packet, other meaningful
 	 * data is either missing or behind TLVs.
 	 */
-	bpf_error(cstate, "link-layer type filtering not implemented for %s",
+	bpf_error(cstate, "link-layer protocol filtering not implemented for %s",
 	    pcapint_datalink_val_to_string(cstate->linktype));
 }
 
@@ -5419,7 +5455,7 @@ gen_dnhostop(compiler_state_t *cstate, bpf_u_int32 addr, int dir)
 	 * To test PLENGTH and FLAGS, use multiple-byte constants with the
 	 * values and the masks, this maps to the required single bytes of
 	 * the message correctly on both big-endian and little-endian hosts.
-	 * For the DECnet address use SWAPSHORT(), which always swaps bytes,
+	 * For the DECnet address use PCAP_BSWAP_16(), which always swaps bytes,
 	 * because the wire encoding is little-endian and BPF multiple-byte
 	 * loads are big-endian.  When the destination address is near enough
 	 * to PLENGTH and FLAGS, generate one 32-bit comparison instead of two
@@ -5428,35 +5464,35 @@ gen_dnhostop(compiler_state_t *cstate, bpf_u_int32 addr, int dir)
 	/* Check for pad = 1, long header case */
 	tmp = gen_mcmp(cstate, OR_LINKPL, 2, BPF_H, 0x8106U, 0xFF07U);
 	b1 = gen_cmp(cstate, OR_LINKPL, 2 + 1 + offset_lh,
-	    BPF_H, SWAPSHORT(addr));
+	    BPF_H, PCAP_BSWAP_16(addr));
 	b1 = gen_and(tmp, b1);
 	/* Check for pad = 0, long header case */
 	tmp = gen_mcmp(cstate, OR_LINKPL, 2, BPF_B, 0x06U, 0x07U);
 	b2 = gen_cmp(cstate, OR_LINKPL, 2 + offset_lh, BPF_H,
-	    SWAPSHORT(addr));
+	    PCAP_BSWAP_16(addr));
 	b2 = gen_and(tmp, b2);
 	b1 = gen_or(b2, b1);
 	/* Check for pad = 1, short header case */
 	if (dir == Q_DST) {
 		b2 = gen_mcmp(cstate, OR_LINKPL, 2, BPF_W,
-		    0x81020000U | SWAPSHORT(addr),
+		    0x81020000U | PCAP_BSWAP_16(addr),
 		    0xFF07FFFFU);
 	} else {
 		tmp = gen_mcmp(cstate, OR_LINKPL, 2, BPF_H, 0x8102U, 0xFF07U);
 		b2 = gen_cmp(cstate, OR_LINKPL, 2 + 1 + offset_sh, BPF_H,
-		    SWAPSHORT(addr));
+		    PCAP_BSWAP_16(addr));
 		b2 = gen_and(tmp, b2);
 	}
 	b1 = gen_or(b2, b1);
 	/* Check for pad = 0, short header case */
 	if (dir == Q_DST) {
 		b2 = gen_mcmp(cstate, OR_LINKPL, 2, BPF_W,
-		    0x02000000U | SWAPSHORT(addr) << 8,
+		    0x02000000U | PCAP_BSWAP_16(addr) << 8,
 		    0x07FFFF00U);
 	} else {
 		tmp = gen_mcmp(cstate, OR_LINKPL, 2, BPF_B, 0x02U, 0x07U);
 		b2 = gen_cmp(cstate, OR_LINKPL, 2 + offset_sh, BPF_H,
-		    SWAPSHORT(addr));
+		    PCAP_BSWAP_16(addr));
 		b2 = gen_and(tmp, b2);
 	}
 
@@ -6490,17 +6526,12 @@ lookup_proto(compiler_state_t *cstate, const char *name, const struct qual q)
  * to qualify it with a direction.
  */
 static struct block *
-gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, int proto)
+gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, uint8_t proto)
 {
 	struct block *b0, *b;
 	struct slist *s[100];
-	int fix2, fix3, fix4, fix5;
-	int ahcheck, again, end;
-	int i, max;
-	int reg2 = alloc_reg(cstate);
 
 	memset(s, 0, sizeof(s));
-	fix3 = fix4 = fix5 = 0;
 
 	switch (proto) {
 	case Q_IP:
@@ -6547,96 +6578,67 @@ gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, int proto)
 	 */
 	cstate->no_optimize = 1;
 
-	/*
-	 * s[0] is a dummy entry to protect other BPF insn from damage
-	 * by s[fix] = foo with uninitialized variable "fix".  It is somewhat
-	 * hard to find interdependency made by jump table fixup.
-	 */
-	i = 0;
-	s[i] = new_stmt(cstate, 0);	/*dummy*/
-	i++;
+	b0 = gen_linktype(cstate, pq_to_ethertype(cstate, proto));
+	if (b0->meaning == IS_FALSE)
+		return b0; // No need to produce the other operand of the AND.
 
-	switch (proto) {
-	case Q_IP:
-		b0 = gen_linktype(cstate, ETHERTYPE_IP);
+	unsigned i = 0;
 
+	if (proto == Q_IP) {
 		/* A = ip->ip_p */
 		s[i] = gen_load_a(cstate, OR_LINKPL, IPV4_PROTO_OFFSET, BPF_B);
 		i++;
 		/* X = ip->ip_hl << 2 */
 		s[i] = gen_loadx_iphdrlen(cstate);
 		i++;
-		break;
-
-	case Q_IPV6:
-		b0 = gen_linktype(cstate, ETHERTYPE_IPV6);
-
+	} else {
 		/* A = ip6->ip_nxt */
 		s[i] = gen_load_a(cstate, OR_LINKPL, IPV6_PROTO_OFFSET, BPF_B);
 		i++;
 		/* X = sizeof(struct ip6_hdr) */
-		s[i] = new_stmt(cstate, BPF_LDX|BPF_IMM);
-		s[i]->s.k = IP6_HDRLEN;
+		s[i] = NEW_STMT_LDX_IMM(cstate, IP6_HDRLEN);
 		i++;
-		break;
-
-	default:
-		bpf_error(cstate, "unsupported proto to gen_protochain");
-		/*NOTREACHED*/
 	}
 
 	/* again: if (A == v) goto end; else fall through; */
-	again = i;
-	s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-	s[i]->s.k = v;
-	s[i]->s.jt = NULL;		/*later*/
-	s[i]->s.jf = NULL;		/*update in next stmt*/
-	fix5 = i;
+	unsigned again = i;
+	s[i] = NEW_STMT_JEQ_K(cstate, v);
+	// .jt: at "end", .jf: at the next statement.
 	i++;
 
 	/* if (A == IPPROTO_NONE) goto end */
-	s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-	s[i]->s.jt = NULL;	/*later*/
-	s[i]->s.jf = NULL;	/*update in next stmt*/
-	s[i]->s.k = IPPROTO_NONE;
-	s[fix5]->s.jf = s[i];
-	fix2 = i;
+	s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_NONE);
+	// .jt: at "end", .jf: at "v6start" (IPv6) or at "ahcheck" (IPv4).
+	s[i - 1]->s.jf = s[i];
 	i++;
 
+	int reg2 = alloc_reg(cstate);
+	unsigned fix3 = 0;
 	if (proto == Q_IPV6) {
-		int v6start, v6end, v6advance, j;
+		unsigned v6start = i;
 
-		v6start = i;
 		/* if (A == IPPROTO_HOPOPTS) goto v6advance */
-		s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-		s[i]->s.jt = NULL;	/*later*/
-		s[i]->s.jf = NULL;	/*update in next stmt*/
-		s[i]->s.k = IPPROTO_HOPOPTS;
-		s[fix2]->s.jf = s[i];
+		s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_HOPOPTS);
+		// .jt: in the "fixup" loop, .jf: at the next statement.
+		s[i - 1]->s.jf = s[i];
 		i++;
 		/* if (A == IPPROTO_DSTOPTS) goto v6advance */
-		s[i - 1]->s.jf = s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-		s[i]->s.jt = NULL;	/*later*/
-		s[i]->s.jf = NULL;	/*update in next stmt*/
-		s[i]->s.k = IPPROTO_DSTOPTS;
+		s[i - 1]->s.jf = s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_DSTOPTS);
+		// .jt: in the "fixup" loop, .jf: at the next statement.
 		i++;
 		/* if (A == IPPROTO_ROUTING) goto v6advance */
-		s[i - 1]->s.jf = s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-		s[i]->s.jt = NULL;	/*later*/
-		s[i]->s.jf = NULL;	/*update in next stmt*/
-		s[i]->s.k = IPPROTO_ROUTING;
+		s[i - 1]->s.jf = s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_ROUTING);
+		// .jt: in the "fixup" loop, .jf: at the next statement.
 		i++;
 		/* if (A == IPPROTO_FRAGMENT) goto v6advance; else goto ahcheck; */
-		s[i - 1]->s.jf = s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-		s[i]->s.jt = NULL;	/*later*/
-		s[i]->s.jf = NULL;	/*later*/
-		s[i]->s.k = IPPROTO_FRAGMENT;
+		s[i - 1]->s.jf = s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_FRAGMENT);
+		// .jt: in the "fixup" loop, .jf: at "ahcheck".
 		fix3 = i;
-		v6end = i;
+		unsigned v6end = i;
 		i++;
 
 		/* v6advance: */
-		v6advance = i;
+		unsigned v6advance = i;
 
 		/*
 		 * in short,
@@ -6644,137 +6646,109 @@ gen_protochain(compiler_state_t *cstate, bpf_u_int32 v, int proto)
 		 * X = X + (P[X + packet head + 1] + 1) * 8;
 		 */
 		/* A = P[X + packet head] */
-		s[i] = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-		s[i]->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
+		s[i] = NEW_STMT_LDB_IND(cstate,
+		    cstate->off_linkpl.constant_part + cstate->off_nl);
 		i++;
 		/* MEM[reg2] = A */
-		s[i] = new_stmt(cstate, BPF_ST);
-		s[i]->s.k = reg2;
+		s[i] = NEW_STMT_ST_M(cstate, reg2);
 		i++;
 		/* A = P[X + packet head + 1]; */
-		s[i] = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-		s[i]->s.k = cstate->off_linkpl.constant_part + cstate->off_nl + 1;
+		s[i] = NEW_STMT_LDB_IND(cstate,
+		    cstate->off_linkpl.constant_part + cstate->off_nl + 1);
 		i++;
 		/* A += 1 */
-		s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-		s[i]->s.k = 1;
+		s[i] = NEW_STMT_ADD_K(cstate, 1);
 		i++;
 		/* A *= 8 */
-		s[i] = new_stmt(cstate, BPF_ALU|BPF_MUL|BPF_K);
-		s[i]->s.k = 8;
+		s[i] = NEW_STMT_MUL_K(cstate, 8);
 		i++;
 		/* A += X */
-		s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s[i]->s.k = 0;
+		s[i] = NEW_STMT_ADD_X(cstate);
 		i++;
 		/* X = A; */
-		s[i] = new_stmt(cstate, BPF_MISC|BPF_TAX);
+		s[i] = NEW_STMT_TAX(cstate);
 		i++;
 		/* A = MEM[reg2] */
-		s[i] = new_stmt(cstate, BPF_LD|BPF_MEM);
-		s[i]->s.k = reg2;
+		s[i] = NEW_STMT_LD_M(cstate, reg2);
 		i++;
 
 		/* goto again; (must use BPF_JA for backward jump) */
-		s[i] = new_stmt(cstate, JMP(BPF_JA, BPF_K));
-		s[i]->s.k = again - i - 1;
-		s[i - 1]->s.jf = s[i];
+		s[i] = NEW_STMT_JA(cstate, again - i - 1);
 		i++;
 
 		/* fixup */
-		for (j = v6start; j <= v6end; j++)
+		for (unsigned j = v6start; j <= v6end; j++)
 			s[j]->s.jt = s[v6advance];
-	} else {
-		/* nop */
-		s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-		s[i]->s.k = 0;
-		s[fix2]->s.jf = s[i];
-		i++;
 	}
 
 	/* ahcheck: */
-	ahcheck = i;
+	unsigned ahcheck = i;
 	/* if (A == IPPROTO_AH) then fall through; else goto end; */
-	s[i] = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-	s[i]->s.jt = NULL;	/*later*/
-	s[i]->s.jf = NULL;	/*later*/
-	s[i]->s.k = IPPROTO_AH;
+	s[i] = NEW_STMT_JEQ_K(cstate, IPPROTO_AH);
+	// .jt: at the next statement, .jf: at "end".
 	if (fix3)
+		// Fixup the check for IPPROTO_FRAGMENT (IPv6).
 		s[fix3]->s.jf = s[ahcheck];
-	fix4 = i;
+	else
+		// Fixup the check for IPPROTO_NONE (IPv4).
+		s[i - 1]->s.jf = s[ahcheck];
 	i++;
 
 	/*
 	 * in short,
-	 * A = P[X];
-	 * X = X + (P[X + 1] + 2) * 4;
+	 * A = P[X + packet head];
+	 * X = X + (P[X + packet head + 1] + 2) * 4;
 	 */
 	/* A = P[X + packet head]; */
-	s[i] = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-	s[i]->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
+	s[i] = NEW_STMT_LDB_IND(cstate,
+	    cstate->off_linkpl.constant_part + cstate->off_nl);
 	s[i - 1]->s.jt = s[i];
 	i++;
 	/* MEM[reg2] = A */
-	s[i] = new_stmt(cstate, BPF_ST);
-	s[i]->s.k = reg2;
+	s[i] = NEW_STMT_ST_M(cstate, reg2);
 	i++;
-	/* A = X */
-	s[i - 1]->s.jt = s[i] = new_stmt(cstate, BPF_MISC|BPF_TXA);
-	i++;
-	/* A += 1 */
-	s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s[i]->s.k = 1;
-	i++;
-	/* X = A */
-	s[i] = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	i++;
-	/* A = P[X + packet head] */
-	s[i] = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-	s[i]->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
+	/* A = P[X + packet head + 1] */
+	s[i] = NEW_STMT_LDB_IND(cstate,
+	    cstate->off_linkpl.constant_part + cstate->off_nl + 1);
 	i++;
 	/* A += 2 */
-	s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s[i]->s.k = 2;
+	s[i] = NEW_STMT_ADD_K(cstate, 2);
 	i++;
 	/* A *= 4 */
-	s[i] = new_stmt(cstate, BPF_ALU|BPF_MUL|BPF_K);
-	s[i]->s.k = 4;
+	s[i] = NEW_STMT_MUL_K(cstate, 4);
+	i++;
+	/* A += X */
+	s[i] = NEW_STMT_ADD_X(cstate);
 	i++;
 	/* X = A; */
-	s[i] = new_stmt(cstate, BPF_MISC|BPF_TAX);
+	s[i] = NEW_STMT_TAX(cstate);
 	i++;
 	/* A = MEM[reg2] */
-	s[i] = new_stmt(cstate, BPF_LD|BPF_MEM);
-	s[i]->s.k = reg2;
+	s[i] = NEW_STMT_LD_M(cstate, reg2);
 	i++;
 
 	/* goto again; (must use BPF_JA for backward jump) */
-	s[i] = new_stmt(cstate, JMP(BPF_JA, BPF_K));
-	s[i]->s.k = again - i - 1;
+	s[i] = NEW_STMT_JA(cstate, again - i - 1);
 	i++;
 
 	/* end: nop */
-	end = i;
-	s[i] = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s[i]->s.k = 0;
-	s[fix2]->s.jt = s[end];
-	s[fix4]->s.jf = s[end];
-	s[fix5]->s.jt = s[end];
+	s[i] = NEW_STMT_ADD_K(cstate, 0);
+	s[again]->s.jt = s[i];
+	s[again + 1]->s.jt = s[i];
+	s[ahcheck]->s.jf = s[i];
 	i++;
 
 	/*
 	 * make slist chain
 	 */
-	max = i;
-	for (i = 0; i < max - 1; i++)
-		s[i]->next = s[i + 1];
-	s[max - 1]->next = NULL;
+	for (unsigned j = 0; j < i - 1; j++)
+		s[j]->next = s[j + 1];
+	s[i - 1]->next = NULL;
 
 	/*
 	 * emit final check
-	 * Remember, s[0] is dummy.
 	 */
-	b = gen_jmp_k(cstate, BPF_JEQ, v, s[1]);
+	b = gen_jmp_k(cstate, BPF_JEQ, v, s[0]);
 
 	free_reg(cstate, reg2);
 
@@ -7033,6 +7007,11 @@ stringtoport(compiler_state_t *cstate, const char *string, size_t string_size,
 		 * Not a valid number; try looking it up as a port.
 		 */
 		cpy = malloc(string_size + 1);	/* +1 for terminating '\0' */
+		if (cpy == NULL) {
+			bpf_set_error(cstate, "%s: out of memory", __func__);
+			longjmp(cstate->top_ctx, 1);
+			/*NOTREACHED*/
+		}
 		memcpy(cpy, string, string_size);
 		cpy[string_size] = '\0';
 		tcp_port = nametoport(cstate, cpy, IPPROTO_TCP);
@@ -7336,7 +7315,7 @@ gen_scode(compiler_state_t *cstate, const char *name, struct qual q)
 
 #if !defined(NO_PROTOCHAIN)
 	case Q_PROTOCHAIN:
-		return gen_protochain(cstate, lookup_proto(cstate, name, q), proto);
+		return gen_protochain(cstate, lookup_proto(cstate, name, q), q.proto);
 #endif /* !defined(NO_PROTOCHAIN) */
 
 	case Q_UNDEF:
@@ -7409,7 +7388,7 @@ gen_mcode(compiler_state_t *cstate, const char *s1, const char *s2,
 	/*NOTREACHED*/
 }
 
-struct block *
+UNSIGNED_SHIFT_OK struct block *
 gen_ncode(compiler_state_t *cstate, const char *s, bpf_u_int32 v, struct qual q)
 {
 	bpf_u_int32 mask;
@@ -7491,7 +7470,7 @@ gen_ncode(compiler_state_t *cstate, const char *s, bpf_u_int32 v, struct qual q)
 
 #if !defined(NO_PROTOCHAIN)
 	case Q_PROTOCHAIN:
-		return gen_protochain(cstate, v, proto);
+		return gen_protochain(cstate, v, q.proto);
 #endif
 
 	case Q_UNDEF:
@@ -7666,21 +7645,13 @@ sprepend_to_block(struct slist *s, struct block *b)
 static struct slist *
 xfer_to_x(compiler_state_t *cstate, const struct arth *a)
 {
-	struct slist *s;
-
-	s = new_stmt(cstate, BPF_LDX|BPF_MEM);
-	s->s.k = a->regno;
-	return s;
+	return NEW_STMT_LDX_M(cstate, a->regno);
 }
 
 static struct slist *
 xfer_to_a(compiler_state_t *cstate, const struct arth *a)
 {
-	struct slist *s;
-
-	s = new_stmt(cstate, BPF_LD|BPF_MEM);
-	s->s.k = a->regno;
-	return s;
+	return NEW_STMT_LD_M(cstate, a->regno);
 }
 
 /*
@@ -7695,9 +7666,7 @@ gen_load_internal(compiler_state_t *cstate, int proto, struct arth *inst,
     bpf_u_int32 size)
 {
 	int size_code;
-	int regno = alloc_reg(cstate);
 
-	free_reg(cstate, inst->regno);
 	switch (size) {
 
 	default:
@@ -7930,10 +7899,14 @@ gen_load_internal(compiler_state_t *cstate, int proto, struct arth *inst,
 	sappend(inst->s, gen_load_absoffsetarthrel(cstate, s, constpart, inst,
 	    size_code));
 
-	inst->regno = regno;
-	s = new_stmt(cstate, BPF_ST);
-	s->s.k = regno;
-	sappend(inst->s, s);
+	/*
+	 * Only now it is correct to deallocate the input register because
+	 * gen_load_absoffsetarthrel() was using it just before.
+	 */
+	free_reg_arth(cstate, inst);
+
+	alloc_reg_arth(cstate, inst);
+	sappend(inst->s, NEW_STMT_ST_M(cstate, inst->regno));
 
 	return inst;
 }
@@ -7969,8 +7942,8 @@ gen_relation_internal(compiler_state_t *cstate, int code, struct arth *a0,
 	if (reversed)
 		gen_not(b);
 
-	free_reg(cstate, a0->regno);
-	free_reg(cstate, a1->regno);
+	free_reg_arth(cstate, a0);
+	free_reg_arth(cstate, a1);
 
 	/* 'and' together protocol checks */
 	if (a0->b)
@@ -7997,10 +7970,6 @@ gen_relation(compiler_state_t *cstate, int code, struct arth *a0,
 struct arth *
 gen_loadlen(compiler_state_t *cstate)
 {
-	int regno;
-	struct arth *a;
-	struct slist *s;
-
 	/*
 	 * Catch errors reported by us and routines below us, and return NULL
 	 * on an error.
@@ -8008,35 +7977,20 @@ gen_loadlen(compiler_state_t *cstate)
 	if (setjmp(cstate->top_ctx))
 		return (NULL);
 
-	regno = alloc_reg(cstate);
-	a = (struct arth *)newchunk(cstate, sizeof(*a));
-	s = new_stmt(cstate, BPF_LD|BPF_LEN);
-	s->next = new_stmt(cstate, BPF_ST);
-	s->next->s.k = regno;
-	a->s = s;
-	a->regno = regno;
-
+	struct arth *a = new_arth(cstate);
+	alloc_reg_arth(cstate, a);
+	a->s = NEW_STMT_LD_LEN(cstate);
+	sappend(a->s, NEW_STMT_ST_M(cstate, a->regno));
 	return a;
 }
 
 static struct arth *
 gen_loadi_internal(compiler_state_t *cstate, bpf_u_int32 val)
 {
-	struct arth *a;
-	struct slist *s;
-	int reg;
-
-	a = (struct arth *)newchunk(cstate, sizeof(*a));
-
-	reg = alloc_reg(cstate);
-
-	s = new_stmt(cstate, BPF_LD|BPF_IMM);
-	s->s.k = val;
-	s->next = new_stmt(cstate, BPF_ST);
-	s->next->s.k = reg;
-	a->s = s;
-	a->regno = reg;
-
+	struct arth *a = new_arth(cstate);
+	alloc_reg_arth(cstate, a);
+	a->s = NEW_STMT_LD_IMM(cstate, val);
+	sappend(a->s, NEW_STMT_ST_M(cstate, a->regno));
 	return a;
 }
 
@@ -8054,6 +8008,19 @@ gen_loadi(compiler_state_t *cstate, bpf_u_int32 val)
 }
 
 /*
+ * Return true iff the given arithmetic expression is a result of gen_loadi(),
+ * which in the current implementation means it uses exactly two BPF
+ * statements: an "ld #k" followed by an "st M[k]".
+ */
+static inline bool
+is_loadi(const struct arth *a)
+{
+	return a->s->s.code == (BPF_LD|BPF_W|BPF_IMM) &&
+	    a->s->next != NULL && a->s->next->s.code == BPF_ST &&
+	    a->s->next->next == NULL;
+}
+
+/*
  * The a_arg dance is to avoid annoying whining by compilers that
  * a might be clobbered by longjmp - yeah, it might, but *WHO CARES*?
  * It's not *used* after setjmp returns.
@@ -8062,7 +8029,6 @@ struct arth *
 gen_neg(compiler_state_t *cstate, struct arth *a_arg)
 {
 	struct arth *a = a_arg;
-	struct slist *s;
 
 	/*
 	 * Catch errors reported by us and routines below us, and return NULL
@@ -8071,14 +8037,25 @@ gen_neg(compiler_state_t *cstate, struct arth *a_arg)
 	if (setjmp(cstate->top_ctx))
 		return (NULL);
 
-	s = xfer_to_a(cstate, a);
-	sappend(a->s, s);
-	s = new_stmt(cstate, BPF_ALU|BPF_NEG);
-	s->s.k = 0;
-	sappend(a->s, s);
-	s = new_stmt(cstate, BPF_ST);
-	s->s.k = a->regno;
-	sappend(a->s, s);
+	if (is_loadi(a)) {
+		/*
+		 * An immediate value is the best case scenario.  Calculate the
+		 * negative now the same way as in the optimizer and in the
+		 * interpreter (see the comment in gencode.h).
+		 */
+		a->s->s.k = UINT_NEG(a->s->s.k);
+	} else {
+		/*
+		 * Assume the worst case scenario and calculate the negative of
+		 * a generic arithmetic expression at the filter program run
+		 * time.  The optional optimization round may be able to
+		 * improve this later on if it reduces the expression to an
+		 * immediate value.
+		 */
+		sappend(a->s, xfer_to_a(cstate, a));
+		sappend(a->s, NEW_STMT_NEG(cstate));
+		sappend(a->s, NEW_STMT_ST_M(cstate, a->regno));
+	}
 
 	return a;
 }
@@ -8103,37 +8080,48 @@ gen_arth(compiler_state_t *cstate, int code, struct arth *a0_arg,
 		return (NULL);
 
 	/*
-	 * Disallow division by, or modulus by, zero; we do this here
+	 * Disallow division by, or modulo by, zero; we do this here
 	 * so that it gets done even if the optimizer is disabled.
 	 *
 	 * Also disallow shifts by a value greater than 31; we do this
 	 * here, for the same reason.
+	 *
+	 * These checks apply only to the simplest case of the 2nd operand of
+	 * a binary operation -- an immediate value.  Anything more
+	 * sophisticated (even a negation of an immediate value) will have to be
+	 * handled in the optimizer and/or the interpreter.
 	 */
-	if (code == BPF_DIV) {
-		if (a1->s->s.code == (BPF_LD|BPF_IMM) && a1->s->s.k == 0)
-			bpf_error(cstate, "division by zero");
-	} else if (code == BPF_MOD) {
-		if (a1->s->s.code == (BPF_LD|BPF_IMM) && a1->s->s.k == 0)
-			bpf_error(cstate, "modulus by zero");
-	} else if (code == BPF_LSH || code == BPF_RSH) {
-		if (a1->s->s.code == (BPF_LD|BPF_IMM) && a1->s->s.k > 31)
-			bpf_error(cstate, "shift by more than 31 bits");
-	}
+	if (is_loadi(a1))
+		switch (code) {
+		case BPF_DIV:
+			if (a1->s->s.k == 0)
+				bpf_error(cstate, ERRSTR_DIV_BY_ZERO);
+			break;
+		case BPF_MOD:
+			if (a1->s->s.k == 0)
+				bpf_error(cstate, ERRSTR_MOD_BY_ZERO);
+			break;
+		case BPF_LSH:
+		case BPF_RSH:
+			if (a1->s->s.k > 31)
+				bpf_error(cstate, ERRSTR_SHIFT_BY_MORE);
+			break;
+		}
+
 	s0 = xfer_to_x(cstate, a1);
 	s1 = xfer_to_a(cstate, a0);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_X|code);
+	s2 = new_stmt(cstate, OPCODE_ALU_X(code));
 
 	sappend(s1, s2);
 	sappend(s0, s1);
 	sappend(a1->s, s0);
 	sappend(a0->s, a1->s);
 
-	free_reg(cstate, a0->regno);
-	free_reg(cstate, a1->regno);
+	free_reg_arth(cstate, a0);
+	free_reg_arth(cstate, a1);
 
-	s0 = new_stmt(cstate, BPF_ST);
-	a0->regno = s0->s.k = alloc_reg(cstate);
-	sappend(a0->s, s0);
+	alloc_reg_arth(cstate, a0);
+	sappend(a0->s, NEW_STMT_ST_M(cstate, a0->regno));
 
 	return a0;
 }
@@ -8169,22 +8157,74 @@ alloc_reg(compiler_state_t *cstate)
 }
 
 /*
+ * compiler_state_t.regused is a fixed-size array.  If the array index points
+ * outside of the array, this means a bug that is about to cause OOBR or OOBW.
+ * If the register index is valid, but the register has already been freed,
+ * trying to use it or to free it again means another bug.  In either case,
+ * fail before such bugs cascade.
+ */
+static int
+guard_reg(compiler_state_t *cstate, const int regno)
+{
+	if (regno < 0 || regno >= BPF_MEMWORDS || ! cstate->regused[regno])
+		bpf_error(cstate, ERRSTR_FUNC_VAR_INT, __func__, "regno", regno);
+	return regno;
+}
+
+/*
  * Return a register to the table so it can
  * be used later.
  */
 static void
 free_reg(compiler_state_t *cstate, int n)
 {
-	cstate->regused[n] = 0;
+	cstate->regused[guard_reg(cstate, n)] = 0;
+}
+
+/*
+ * If the code tries to use an arithmetic expression that has never been
+ * allocated a scratch memory register, it is a bug.  Invalidate the register
+ * index early to make the bug an early failure.
+ */
+static struct arth *
+new_arth(compiler_state_t *cstate)
+{
+	struct arth *ret = (struct arth *)newchunk(cstate, sizeof(*ret));
+	ret->regno = -1;
+	return ret;
+}
+
+/*
+ * If the code tries to allocate a new scratch memory register to an arithmetic
+ * expression that still has a valid register allocated to it, it is a bug.
+ */
+static void
+alloc_reg_arth(compiler_state_t *cstate, struct arth *a)
+{
+	if (a->regno != -1)
+		bpf_error(cstate,
+		    "Scratch memory register %d was about to leak.", a->regno);
+	a->regno = alloc_reg(cstate);
+}
+
+/*
+ * If the code deallocates an arithmetic expression register, then allocates
+ * the same register for a different purpose and erroneously uses the
+ * expression again, the register index will look valid (in bounds and marked
+ * as allocated), but will be logically invalid.  Invalidate the index on
+ * deallocation to avoid this.
+ */
+static void
+free_reg_arth(compiler_state_t *cstate, struct arth *a)
+{
+	free_reg(cstate, a->regno);
+	a->regno = -1;
 }
 
 static struct block *
 gen_len(compiler_state_t *cstate, int jmp, int n)
 {
-	struct slist *s;
-
-	s = new_stmt(cstate, BPF_LD|BPF_LEN);
-	return gen_jmp_k(cstate, jmp, n, s);
+	return gen_jmp_k(cstate, jmp, n, NEW_STMT_LD_LEN(cstate));
 }
 
 struct block *
@@ -8249,14 +8289,13 @@ gen_byteop(compiler_state_t *cstate, int op, int idx, bpf_u_int32 val)
 		return gen_cmp_gt(cstate, OR_LINKHDR, (u_int)idx, BPF_B, val);
 
 	case '|':
-		s = new_stmt(cstate, BPF_ALU|BPF_OR|BPF_K);
+		s = NEW_STMT_OR_K(cstate, val);
 		break;
 
 	case '&':
-		s = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
+		s = NEW_STMT_AND_K(cstate, val);
 		break;
 	}
-	s->s.k = val;
 	// Load the required byte first.
 	struct slist *s0 = gen_load_a(cstate, OR_LINKHDR, idx, BPF_B);
 	sappend(s0, s);
@@ -8900,32 +8939,24 @@ gen_vlan_no_bpf_extensions(compiler_state_t *cstate, bpf_u_int32 vlan_num,
 }
 
 #if defined(SKF_AD_VLAN_TAG_PRESENT)
-/* add v to variable part of off */
+/* Add v to variable part of off. */
 static void
 gen_vlan_vloffset_add(compiler_state_t *cstate, bpf_abs_offset *off,
     bpf_u_int32 v, struct slist *s)
 {
-	struct slist *s2;
-
 	if (!off->is_variable)
 		off->is_variable = 1;
 	if (off->reg == -1)
 		off->reg = alloc_reg(cstate);
 
-	s2 = new_stmt(cstate, BPF_LD|BPF_MEM);
-	s2->s.k = off->reg;
-	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_IMM);
-	s2->s.k = v;
-	sappend(s, s2);
-	s2 = new_stmt(cstate, BPF_ST);
-	s2->s.k = off->reg;
-	sappend(s, s2);
+	sappend(s, NEW_STMT_LD_M(cstate, off->reg));
+	sappend(s, NEW_STMT_ADD_K(cstate, v));
+	sappend(s, NEW_STMT_ST_M(cstate, off->reg));
 }
 
 /*
- * patch block b_tpid (VLAN TPID test) to update variable parts of link payload
- * and link type offsets first
+ * Patch block b_tpid (VLAN TPID test) to update variable parts of link payload
+ * and link type offsets first.
  */
 static void
 gen_vlan_patch_tpid_test(compiler_state_t *cstate, struct block *b_tpid)
@@ -8943,8 +8974,8 @@ gen_vlan_patch_tpid_test(compiler_state_t *cstate, struct block *b_tpid)
 }
 
 /*
- * patch block b_vid (VLAN id test) to load VID value either from packet
- * metadata (using BPF extensions) if SKF_AD_VLAN_TAG_PRESENT is true
+ * Patch block b_vid (VLAN ID test) to load VID value either from packet
+ * metadata (using BPF extensions) if SKF_AD_VLAN_TAG_PRESENT is true.
  */
 static void
 gen_vlan_patch_vid_test(compiler_state_t *cstate, struct block *b_vid)
@@ -8952,17 +8983,16 @@ gen_vlan_patch_vid_test(compiler_state_t *cstate, struct block *b_vid)
 	struct slist *s, *s2, *sjeq;
 	unsigned cnt;
 
-	s = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-	s->s.k = (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG_PRESENT);
+	s = NEW_STMT_LDB_ABS(cstate,
+	    (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG_PRESENT));
 
 	/* true -> next instructions, false -> beginning of b_vid */
-	sjeq = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-	sjeq->s.k = 1;
+	sjeq = NEW_STMT_JEQ_K(cstate, 1);
 	sjeq->s.jf = b_vid->stmts;
 	sappend(s, sjeq);
 
-	s2 = new_stmt(cstate, BPF_LD|BPF_H|BPF_ABS);
-	s2->s.k = (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG);
+	s2 = NEW_STMT_LDH_ABS(cstate,
+	    (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG));
 	sappend(s, s2);
 	sjeq->s.jt = s2;
 
@@ -8973,9 +9003,7 @@ gen_vlan_patch_vid_test(compiler_state_t *cstate, struct block *b_vid)
 	cnt = 0;
 	for (s2 = b_vid->stmts; s2; s2 = s2->next)
 		cnt++;
-	s2 = new_stmt(cstate, JMP(BPF_JA, BPF_K));
-	s2->s.k = cnt - 1;
-	sappend(s, s2);
+	sappend(s, NEW_STMT_JA(cstate, cnt - 1));
 
 	/* insert our statements at the beginning of b_vid */
 	sprepend_to_block(s, b_vid);
@@ -8998,8 +9026,8 @@ gen_vlan_bpf_extensions(compiler_state_t *cstate, bpf_u_int32 vlan_num,
 
 	/* generate new filter code based on extracting packet
 	 * metadata */
-	s = new_stmt(cstate, BPF_LD|BPF_B|BPF_ABS);
-	s->s.k = (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG_PRESENT);
+	s = NEW_STMT_LDB_ABS(cstate,
+	    (bpf_u_int32)(SKF_AD_OFF + SKF_AD_VLAN_TAG_PRESENT));
 
 	b0 = gen_jmp_k(cstate, BPF_JEQ, 1, s);
 
@@ -9030,7 +9058,7 @@ gen_vlan_bpf_extensions(compiler_state_t *cstate, bpf_u_int32 vlan_num,
 #endif
 
 /*
- * support IEEE 802.1Q VLAN trunk over ethernet
+ * Support IEEE 802.1Q VLAN trunk over Ethernet.
  */
 struct block *
 gen_vlan(compiler_state_t *cstate, bpf_u_int32 vlan_num, int has_vlan_tag)
@@ -9232,7 +9260,7 @@ gen_mpls(compiler_state_t *cstate, bpf_u_int32 label_num, int has_label_num)
 }
 
 /*
- * Support PPPOE discovery and session.
+ * Support PPPoE discovery and session.
  */
 struct block *
 gen_pppoed(compiler_state_t *cstate)
@@ -9352,15 +9380,14 @@ static struct block *
 gen_geneve4(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 {
 	struct block *b0, *b1;
-	struct slist *s, *s1;
+	struct slist *s;
 
 	b0 = gen_geneve_check(cstate, gen_port, OR_TRAN_IPV4, vni, has_vni);
 
 	/* Load the IP header length into A. */
 	s = gen_loadx_iphdrlen(cstate);
 
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TXA);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TXA(cstate));
 
 	/* Forcibly append these statements to the true condition
 	 * of the protocol check by creating a new block that is
@@ -9374,7 +9401,7 @@ static struct block *
 gen_geneve6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 {
 	struct block *b0, *b1;
-	struct slist *s, *s1;
+	struct slist *s;
 
 	b0 = gen_geneve_check(cstate, gen_port6, OR_TRAN_IPV6, vni, has_vni);
 
@@ -9382,23 +9409,16 @@ gen_geneve6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 	 * variable length link prefix if there is one. */
 	s = gen_abs_offset_varpart(cstate, &cstate->off_linkpl);
 	if (s) {
-		s1 = new_stmt(cstate, BPF_LD|BPF_IMM);
-		s1->s.k = IP6_HDRLEN;
-		sappend(s, s1);
-
-		s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s1->s.k = 0;
-		sappend(s, s1);
+		sappend(s, NEW_STMT_LD_IMM(cstate, IP6_HDRLEN));
+		sappend(s, NEW_STMT_ADD_X(cstate));
 	} else {
-		s = new_stmt(cstate, BPF_LD|BPF_IMM);
-		s->s.k = IP6_HDRLEN;
+		s = NEW_STMT_LD_IMM(cstate, IP6_HDRLEN);
 	}
 
 	/* Forcibly append these statements to the true condition
 	 * of the protocol check by creating a new block that is
 	 * always true and ANDing them. */
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TAX(cstate));
 
 	b1 = gen_jmp_x(cstate, BPF_JEQ, s);
 
@@ -9419,51 +9439,36 @@ gen_geneve_offsets(compiler_state_t *cstate)
 	 * (include any variable link prefix) and stored in A plus the
 	 * fixed sized headers (fixed link prefix, MAC length, and UDP
 	 * header). */
-	s = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s->s.k = cstate->off_linkpl.constant_part + cstate->off_nl + 8;
+	s = NEW_STMT_ADD_K(cstate,
+	    cstate->off_linkpl.constant_part + cstate->off_nl + 8);
 
 	/* Stash this in X since we'll need it later. */
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TAX(cstate));
 
 	/* The EtherType in Geneve is 2 bytes in. Calculate this and
 	 * store it. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 2;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 2));
 
 	cstate->off_linktype.reg = alloc_reg(cstate);
 	cstate->off_linktype.is_variable = 1;
 	cstate->off_linktype.constant_part = 0;
 
-	s1 = new_stmt(cstate, BPF_ST);
-	s1->s.k = cstate->off_linktype.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linktype.reg));
 
 	/* Load the Geneve option length and mask and shift to get the
 	 * number of bytes. It is stored in the first byte of the Geneve
 	 * header. */
-	s1 = new_stmt(cstate, BPF_LD|BPF_IND|BPF_B);
-	s1->s.k = 0;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_LDB_IND(cstate, 0));
 
-	s1 = new_stmt(cstate, BPF_ALU|BPF_AND|BPF_K);
-	s1->s.k = 0x3f;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_AND_K(cstate, 0x3f));
 
-	s1 = new_stmt(cstate, BPF_ALU|BPF_MUL|BPF_K);
-	s1->s.k = 4;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_MUL_K(cstate, 4));
 
 	/* Add in the rest of the Geneve base header. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 8;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 8));
 
 	/* Add the Geneve header length to its offset and store. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-	s1->s.k = 0;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_X(cstate));
 
 	/* Set the encapsulated type as Ethernet. Even though we may
 	 * not actually have Ethernet inside there are two reasons this
@@ -9475,9 +9480,7 @@ gen_geneve_offsets(compiler_state_t *cstate)
 	 *   Ethernet at runtime before executing these checks. */
 	PUSH_LINKHDR(cstate, DLT_EN10MB, 1, 0, alloc_reg(cstate));
 
-	s1 = new_stmt(cstate, BPF_ST);
-	s1->s.k = cstate->off_linkhdr.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg));
 
 	/* Calculate whether we have an Ethernet header or just raw IP/
 	 * MPLS/etc. If we have Ethernet, advance the end of the MAC offset
@@ -9488,53 +9491,40 @@ gen_geneve_offsets(compiler_state_t *cstate)
 	cstate->no_optimize = 1;
 
 	/* Load the EtherType in the Geneve header, 2 bytes in. */
-	s1 = new_stmt(cstate, BPF_LD|BPF_IND|BPF_H);
-	s1->s.k = 2;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_LDH_IND(cstate, 2));
 
 	/* Load X with the end of the Geneve header. */
-	s1 = new_stmt(cstate, BPF_LDX|BPF_MEM);
-	s1->s.k = cstate->off_linkhdr.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_LDX_M(cstate, cstate->off_linkhdr.reg));
 
 	/* Check if the EtherType is Transparent Ethernet Bridging. At the
 	 * end of this check, we should have the total length in X. In
 	 * the non-Ethernet case, it's already there. */
-	s_proto = new_stmt(cstate, JMP(BPF_JEQ, BPF_K));
-	s_proto->s.k = ETHERTYPE_TEB;
+	s_proto = NEW_STMT_JEQ_K(cstate, ETHERTYPE_TEB);
 	sappend(s, s_proto);
 
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TXA);
+	s1 = NEW_STMT_TXA(cstate);
 	sappend(s, s1);
 	s_proto->s.jt = s1;
 
 	/* Since this is Ethernet, use the EtherType of the payload
 	 * directly as the linktype. Overwrite what we already have. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 12;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 12));
 
-	s1 = new_stmt(cstate, BPF_ST);
-	s1->s.k = cstate->off_linktype.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linktype.reg));
 
 	/* Advance two bytes further to get the end of the Ethernet
 	 * header. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 2;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 2));
 
 	/* Move the result to X. */
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TAX(cstate));
 
 	/* Store the final result of our linkpl calculation. */
 	cstate->off_linkpl.reg = alloc_reg(cstate);
 	cstate->off_linkpl.is_variable = 1;
 	cstate->off_linkpl.constant_part = 0;
 
-	s1 = new_stmt(cstate, BPF_STX);
-	s1->s.k = cstate->off_linkpl.reg;
+	s1 = NEW_STMT_STX_M(cstate, cstate->off_linkpl.reg);
 	sappend(s, s1);
 	s_proto->s.jf = s1;
 
@@ -9563,7 +9553,7 @@ gen_geneve(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 	 * update all of the header pointers. Attach this code so that
 	 * it gets executed in the event that the Geneve filter matches. */
 	struct block *offsets =
-		sprepend_to_block(gen_geneve_offsets(cstate),gen_true(cstate));
+		sprepend_to_block(gen_geneve_offsets(cstate), gen_true(cstate));
 
 	cstate->is_encap = 1;
 
@@ -9605,15 +9595,14 @@ static struct block *
 gen_vxlan4(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 {
 	struct block *b0, *b1;
-	struct slist *s, *s1;
+	struct slist *s;
 
 	b0 = gen_vxlan_check(cstate, gen_port, OR_TRAN_IPV4, vni, has_vni);
 
 	/* Load the IP header length into A. */
 	s = gen_loadx_iphdrlen(cstate);
 
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TXA);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TXA(cstate));
 
 	/* Forcibly append these statements to the true condition
 	 * of the protocol check by creating a new block that is
@@ -9627,7 +9616,7 @@ static struct block *
 gen_vxlan6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 {
 	struct block *b0, *b1;
-	struct slist *s, *s1;
+	struct slist *s;
 
 	b0 = gen_vxlan_check(cstate, gen_port6, OR_TRAN_IPV6, vni, has_vni);
 
@@ -9635,23 +9624,16 @@ gen_vxlan6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 	 * variable length link prefix if there is one. */
 	s = gen_abs_offset_varpart(cstate, &cstate->off_linkpl);
 	if (s) {
-		s1 = new_stmt(cstate, BPF_LD|BPF_IMM);
-		s1->s.k = IP6_HDRLEN;
-		sappend(s, s1);
-
-		s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X);
-		s1->s.k = 0;
-		sappend(s, s1);
+		sappend(s, NEW_STMT_LD_IMM(cstate, IP6_HDRLEN));
+		sappend(s, NEW_STMT_ADD_X(cstate));
 	} else {
-		s = new_stmt(cstate, BPF_LD|BPF_IMM);
-		s->s.k = IP6_HDRLEN;
+		s = NEW_STMT_LD_IMM(cstate, IP6_HDRLEN);
 	}
 
 	/* Forcibly append these statements to the true condition
 	 * of the protocol check by creating a new block that is
 	 * always true and ANDing them. */
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TAX(cstate));
 
 	b1 = gen_jmp_x(cstate, BPF_JEQ, s);
 
@@ -9665,60 +9647,47 @@ gen_vxlan6(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 static struct slist *
 gen_vxlan_offsets(compiler_state_t *cstate)
 {
-	struct slist *s, *s1;
+	struct slist *s;
 
 	/* Calculate the offset of the VXLAN header itself. This
 	 * includes the IP header computed previously (including any
 	 * variable link prefix) and stored in A plus the fixed size
 	 * headers (fixed link prefix, MAC length, UDP header). */
-	s = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s->s.k = cstate->off_linkpl.constant_part + cstate->off_nl + 8;
+	s = NEW_STMT_ADD_K(cstate,
+	    cstate->off_linkpl.constant_part + cstate->off_nl + 8);
 
 	/* Add the VXLAN header length to its offset and store */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 8;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 8));
 
 	/* Push the link header. VXLAN packets always contain Ethernet
 	 * frames. */
 	PUSH_LINKHDR(cstate, DLT_EN10MB, 1, 0, alloc_reg(cstate));
 
-	s1 = new_stmt(cstate, BPF_ST);
-	s1->s.k = cstate->off_linkhdr.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linkhdr.reg));
 
 	/* As the payload is an Ethernet packet, we can use the
 	 * EtherType of the payload directly as the linktype. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 12;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 12));
 
 	cstate->off_linktype.reg = alloc_reg(cstate);
 	cstate->off_linktype.is_variable = 1;
 	cstate->off_linktype.constant_part = 0;
 
-	s1 = new_stmt(cstate, BPF_ST);
-	s1->s.k = cstate->off_linktype.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ST_M(cstate, cstate->off_linktype.reg));
 
 	/* Two bytes further is the end of the Ethernet header and the
 	 * start of the payload. */
-	s1 = new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_K);
-	s1->s.k = 2;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_ADD_K(cstate, 2));
 
 	/* Move the result to X. */
-	s1 = new_stmt(cstate, BPF_MISC|BPF_TAX);
-	sappend(s, s1);
+	sappend(s, NEW_STMT_TAX(cstate));
 
 	/* Store the final result of our linkpl calculation. */
 	cstate->off_linkpl.reg = alloc_reg(cstate);
 	cstate->off_linkpl.is_variable = 1;
 	cstate->off_linkpl.constant_part = 0;
 
-	s1 = new_stmt(cstate, BPF_STX);
-	s1->s.k = cstate->off_linkpl.reg;
-	sappend(s, s1);
+	sappend(s, NEW_STMT_STX_M(cstate, cstate->off_linkpl.reg));
 
 	cstate->off_nl = 0;
 
@@ -9737,6 +9706,12 @@ gen_vxlan(compiler_state_t *cstate, bpf_u_int32 vni, int has_vni)
 	 */
 	if (setjmp(cstate->top_ctx))
 		return (NULL);
+
+	/*
+	 * This code generates blocks that are known to trigger a bug in the
+	 * optimizer (see GitHub 1670), so avoid the bug until it gets fixed.
+	 */
+	cstate->no_optimize = 1;
 
 	b0 = gen_vxlan4(cstate, vni, has_vni);
 	b1 = gen_vxlan6(cstate, vni, has_vni);
@@ -9758,7 +9733,7 @@ static struct block *
 gen_encap_ll_check(compiler_state_t *cstate)
 {
 	struct block *b0;
-	struct slist *s, *s1;
+	struct slist *s;
 
 	/* The easiest way to see if there is a link layer present
 	 * is to check if the link layer header and payload are not
@@ -9766,12 +9741,8 @@ gen_encap_ll_check(compiler_state_t *cstate)
 
 	/* Geneve always generates pure variable offsets so we can
 	 * compare only the registers. */
-	s = new_stmt(cstate, BPF_LD|BPF_MEM);
-	s->s.k = cstate->off_linkhdr.reg;
-
-	s1 = new_stmt(cstate, BPF_LDX|BPF_MEM);
-	s1->s.k = cstate->off_linkpl.reg;
-	sappend(s, s1);
+	s = NEW_STMT_LD_M(cstate, cstate->off_linkhdr.reg);
+	sappend(s, NEW_STMT_LDX_M(cstate, cstate->off_linkpl.reg));
 
 	b0 = gen_jmp_x(cstate, BPF_JEQ, s);
 
@@ -10059,8 +10030,8 @@ gen_mtp3field_code_internal(compiler_state_t *cstate, int mtp3field,
 	case M_OPC:
 		assert_maxval(cstate, ss7kw(mtp3field), jvalue, MTP3_PC_MAXVAL);
 		return gen_ncmp(cstate, OR_PACKET, newoff_opc, BPF_W,
-		    SWAPLONG(MTP3_PC_MAXVAL << 14), jtype, reverse,
-		    SWAPLONG(jvalue << 14));
+		    PCAP_BSWAP_32(MTP3_PC_MAXVAL << 14), jtype, reverse,
+		    PCAP_BSWAP_32(jvalue << 14));
 
 	case MH_DPC:
 		newoff_dpc += 3;
@@ -10069,8 +10040,8 @@ gen_mtp3field_code_internal(compiler_state_t *cstate, int mtp3field,
 	case M_DPC:
 		assert_maxval(cstate, ss7kw(mtp3field), jvalue, MTP3_PC_MAXVAL);
 		return gen_ncmp(cstate, OR_PACKET, newoff_dpc, BPF_H,
-		    SWAPSHORT(MTP3_PC_MAXVAL), jtype, reverse,
-		    SWAPSHORT(jvalue));
+		    PCAP_BSWAP_16(MTP3_PC_MAXVAL), jtype, reverse,
+		    PCAP_BSWAP_16(jvalue));
 
 	case MH_SLS:
 		newoff_sls += 3;

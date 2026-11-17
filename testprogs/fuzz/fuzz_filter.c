@@ -1,10 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "varattrs.h"
 
 #include <pcap/pcap.h>
 
-void fuzz_openFile(const char * name){
+void fuzz_openFile(const char * name _U_){
     //do nothing
 }
 

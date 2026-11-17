@@ -137,7 +137,7 @@ netfilter_read_linux(pcap_t *handle, int max_packets, pcap_handler callback, u_c
 		 * is also a u_int.
 		 */
 		cc = (u_int)read_ret;
-		bp = (unsigned char *)handle->buffer;
+		bp = handle->buffer;
 	} else
 		bp = handle->bp;
 
@@ -263,8 +263,8 @@ netfilter_read_linux(pcap_t *handle, int max_packets, pcap_handler callback, u_c
 
 				gettimeofday(&pkth.ts, NULL);
 				if (handle->fcode.bf_insns == NULL ||
-						pcapint_filter(handle->fcode.bf_insns, payload, pkth.len, pkth.caplen))
-				{
+				    pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+				                   payload, pkth.len, pkth.caplen)) {
 					handlep->packets_read++;
 					callback(user, &pkth, payload);
 					count++;
@@ -798,10 +798,12 @@ netfilter_findalldevs(pcap_if_list_t *devlistp, char *err_str)
 	 * XXX - what about "up" and "running"?
 	 */
 	if (pcapint_add_dev(devlistp, NFLOG_IFACE,
+	    PCAP_IF_NO_INJECT |
 	    PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
 	    "Linux netfilter log (NFLOG) interface", err_str) == NULL)
 		return -1;
 	if (pcapint_add_dev(devlistp, NFQUEUE_IFACE,
+	    PCAP_IF_NO_INJECT |
 	    PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
 	    "Linux netfilter queue (NFQUEUE) interface", err_str) == NULL)
 		return -1;

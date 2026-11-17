@@ -327,8 +327,8 @@ read_block(FILE *fp, pcap_t *p, struct block_cursor *cursor, char *errbuf)
 		return (status);	/* error or EOF */
 
 	if (p->swapped) {
-		bhdr.block_type = SWAPLONG(bhdr.block_type);
-		bhdr.total_length = SWAPLONG(bhdr.total_length);
+		bhdr.block_type = PCAP_BSWAP_32(bhdr.block_type);
+		bhdr.total_length = PCAP_BSWAP_32(bhdr.total_length);
 	}
 
 	/*
@@ -365,19 +365,13 @@ read_block(FILE *fp, pcap_t *p, struct block_cursor *cursor, char *errbuf)
 		 * No - make it big enough, unless it's too big, in
 		 * which case we fail.
 		 */
-		void *bigger_buffer;
-
 		if (bhdr.total_length > ps->max_blocksize) {
 			snprintf(errbuf, PCAP_ERRBUF_SIZE, "pcapng block size %u > maximum %u", bhdr.total_length,
 			    ps->max_blocksize);
 			return (-1);
 		}
-		bigger_buffer = realloc(p->buffer, bhdr.total_length);
-		if (bigger_buffer == NULL) {
-			snprintf(errbuf, PCAP_ERRBUF_SIZE, "out of memory");
+		if (!pcapint_grow_buffer(p, bhdr.total_length, errbuf))
 			return (-1);
-		}
-		p->buffer = bigger_buffer;
 	}
 
 	/*
@@ -395,7 +389,7 @@ read_block(FILE *fp, pcap_t *p, struct block_cursor *cursor, char *errbuf)
 	 */
 	btrlr = (struct block_trailer *)(bdata + data_remaining - sizeof (struct block_trailer));
 	if (p->swapped)
-		btrlr->total_length = SWAPLONG(btrlr->total_length);
+		btrlr->total_length = PCAP_BSWAP_32(btrlr->total_length);
 
 	/*
 	 * Is the total length from the trailer the same as the total
@@ -495,8 +489,8 @@ get_opthdr_from_block_data(pcap_t *p, struct block_cursor *cursor, char *errbuf)
 	 * Byte-swap it if necessary.
 	 */
 	if (p->swapped) {
-		opthdr->option_code = SWAPSHORT(opthdr->option_code);
-		opthdr->option_length = SWAPSHORT(opthdr->option_length);
+		opthdr->option_code = PCAP_BSWAP_16(opthdr->option_code);
+		opthdr->option_length = PCAP_BSWAP_16(opthdr->option_length);
 	}
 
 	return (opthdr);
@@ -731,7 +725,7 @@ process_idb_options(pcap_t *p, struct block_cursor *cursor, uint64_t *tsresol,
 			saw_tsoffset = 1;
 			memcpy(tsoffset, optvalue, sizeof(*tsoffset));
 			if (p->swapped)
-				*tsoffset = SWAPLL(*tsoffset);
+				*tsoffset = PCAP_BSWAP_64(*tsoffset);
 			break;
 
 		default:
@@ -748,6 +742,8 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
     struct block_cursor *cursor, char *errbuf)
 {
 	struct pcap_ng_sf *ps;
+	bpf_u_int32 new_ifcount;
+	bpf_u_int32 new_if_index;
 	uint64_t tsresol;
 	int64_t tsoffset;
 	int is_binary;
@@ -757,12 +753,18 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
 	/*
 	 * Count this interface.
 	 */
-	ps->ifcount++;
+	new_ifcount = ps->ifcount + 1;
+
+	/*
+	 * The array of interfaces is 0-based, so the current number of
+	 * interfaces will be the index of the new interface.
+	 */
+	new_if_index = ps->ifcount;
 
 	/*
 	 * Grow the array of per-interface information as necessary.
 	 */
-	if (ps->ifcount > ps->ifaces_size) {
+	if (new_ifcount > ps->ifaces_size) {
 		/*
 		 * We need to grow the array.
 		 */
@@ -847,14 +849,14 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
 			 */
 			snprintf(errbuf, PCAP_ERRBUF_SIZE,
 			    "out of memory for per-interface information (%u interfaces)",
-			    ps->ifcount);
+			    new_ifcount);
 			return (0);
 		}
 		ps->ifaces_size = new_ifaces_size;
 		ps->ifaces = new_ifaces;
 	}
 
-	ps->ifaces[ps->ifcount - 1].snaplen = idbp->snaplen;
+	ps->ifaces[new_if_index].snaplen = idbp->snaplen;
 
 	/*
 	 * Set the default time stamp resolution and offset.
@@ -871,8 +873,8 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
 	    errbuf) == -1)
 		return (0);
 
-	ps->ifaces[ps->ifcount - 1].tsresol = tsresol;
-	ps->ifaces[ps->ifcount - 1].tsoffset = tsoffset;
+	ps->ifaces[new_if_index].tsresol = tsresol;
+	ps->ifaces[new_if_index].tsoffset = tsoffset;
 
 	/*
 	 * Determine whether we're scaling up or down or not
@@ -883,20 +885,20 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
 		 * The resolution is the resolution the user wants,
 		 * so we don't have to do scaling.
 		 */
-		ps->ifaces[ps->ifcount - 1].scale_type = PASS_THROUGH;
+		ps->ifaces[new_if_index].scale_type = PASS_THROUGH;
 	} else if (tsresol > ps->user_tsresol) {
 		/*
 		 * The resolution is greater than what the user wants,
 		 * so we have to scale the timestamps down.
 		 */
 		if (is_binary)
-			ps->ifaces[ps->ifcount - 1].scale_type = SCALE_DOWN_BIN;
+			ps->ifaces[new_if_index].scale_type = SCALE_DOWN_BIN;
 		else {
 			/*
 			 * Calculate the scale factor.
 			 */
-			ps->ifaces[ps->ifcount - 1].scale_factor = tsresol/ps->user_tsresol;
-			ps->ifaces[ps->ifcount - 1].scale_type = SCALE_DOWN_DEC;
+			ps->ifaces[new_if_index].scale_factor = tsresol/ps->user_tsresol;
+			ps->ifaces[new_if_index].scale_type = SCALE_DOWN_DEC;
 		}
 	} else {
 		/*
@@ -904,15 +906,20 @@ add_interface(pcap_t *p, struct interface_description_block *idbp,
 		 * so we have to scale the timestamps up.
 		 */
 		if (is_binary)
-			ps->ifaces[ps->ifcount - 1].scale_type = SCALE_UP_BIN;
+			ps->ifaces[new_if_index].scale_type = SCALE_UP_BIN;
 		else {
 			/*
 			 * Calculate the scale factor.
 			 */
-			ps->ifaces[ps->ifcount - 1].scale_factor = ps->user_tsresol/tsresol;
-			ps->ifaces[ps->ifcount - 1].scale_type = SCALE_UP_DEC;
+			ps->ifaces[new_if_index].scale_factor = ps->user_tsresol/tsresol;
+			ps->ifaces[new_if_index].scale_type = SCALE_UP_DEC;
 		}
 	}
+
+	/*
+	 * We've succeeded, so update the interface count.
+	 */
+	ps->ifcount = new_ifcount;
 	return (1);
 }
 
@@ -1002,7 +1009,7 @@ pcap_ng_check_header(const uint8_t *magic, FILE *fp, u_int precision,
 		return (NULL);
 	}
 	if (byte_order_magic != BYTE_ORDER_MAGIC) {
-		byte_order_magic = SWAPLONG(byte_order_magic);
+		byte_order_magic = PCAP_BSWAP_32(byte_order_magic);
 		if (byte_order_magic != BYTE_ORDER_MAGIC) {
 			/*
 			 * Not a pcapng file.
@@ -1010,7 +1017,7 @@ pcap_ng_check_header(const uint8_t *magic, FILE *fp, u_int precision,
 			return (NULL);
 		}
 		swapped = 1;
-		total_length = SWAPLONG(total_length);
+		total_length = PCAP_BSWAP_32(total_length);
 	}
 
 	/*
@@ -1111,8 +1118,8 @@ pcap_ng_check_header(const uint8_t *magic, FILE *fp, u_int precision,
 		/*
 		 * Byte-swap the fields we've read.
 		 */
-		shbp->major_version = SWAPSHORT(shbp->major_version);
-		shbp->minor_version = SWAPSHORT(shbp->minor_version);
+		shbp->major_version = PCAP_BSWAP_16(shbp->major_version);
+		shbp->minor_version = PCAP_BSWAP_16(shbp->minor_version);
 
 		/*
 		 * XXX - we don't care about the section length.
@@ -1180,8 +1187,8 @@ pcap_ng_check_header(const uint8_t *magic, FILE *fp, u_int precision,
 			 * Byte-swap it if necessary.
 			 */
 			if (p->swapped) {
-				idbp->linktype = SWAPSHORT(idbp->linktype);
-				idbp->snaplen = SWAPLONG(idbp->snaplen);
+				idbp->linktype = PCAP_BSWAP_16(idbp->linktype);
+				idbp->snaplen = PCAP_BSWAP_32(idbp->snaplen);
 			}
 
 			/*
@@ -1301,11 +1308,11 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			 */
 			if (p->swapped) {
 				/* these were written in opposite byte order */
-				interface_id = SWAPLONG(epbp->interface_id);
-				hdr->caplen = SWAPLONG(epbp->caplen);
-				hdr->len = SWAPLONG(epbp->len);
-				t = ((uint64_t)SWAPLONG(epbp->timestamp_high)) << 32 |
-				    SWAPLONG(epbp->timestamp_low);
+				interface_id = PCAP_BSWAP_32(epbp->interface_id);
+				hdr->caplen = PCAP_BSWAP_32(epbp->caplen);
+				hdr->len = PCAP_BSWAP_32(epbp->len);
+				t = ((uint64_t)PCAP_BSWAP_32(epbp->timestamp_high)) << 32 |
+				    PCAP_BSWAP_32(epbp->timestamp_low);
 			} else {
 				interface_id = epbp->interface_id;
 				hdr->caplen = epbp->caplen;
@@ -1336,7 +1343,7 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			 */
 			if (p->swapped) {
 				/* these were written in opposite byte order */
-				hdr->len = SWAPLONG(spbp->len);
+				hdr->len = PCAP_BSWAP_32(spbp->len);
 			} else
 				hdr->len = spbp->len;
 
@@ -1366,11 +1373,11 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			 */
 			if (p->swapped) {
 				/* these were written in opposite byte order */
-				interface_id = SWAPSHORT(pbp->interface_id);
-				hdr->caplen = SWAPLONG(pbp->caplen);
-				hdr->len = SWAPLONG(pbp->len);
-				t = ((uint64_t)SWAPLONG(pbp->timestamp_high)) << 32 |
-				    SWAPLONG(pbp->timestamp_low);
+				interface_id = PCAP_BSWAP_16(pbp->interface_id);
+				hdr->caplen = PCAP_BSWAP_32(pbp->caplen);
+				hdr->len = PCAP_BSWAP_32(pbp->len);
+				t = ((uint64_t)PCAP_BSWAP_32(pbp->timestamp_high)) << 32 |
+				    PCAP_BSWAP_32(pbp->timestamp_low);
 			} else {
 				interface_id = pbp->interface_id;
 				hdr->caplen = pbp->caplen;
@@ -1394,8 +1401,8 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			 * Byte-swap it if necessary.
 			 */
 			if (p->swapped) {
-				idbp->linktype = SWAPSHORT(idbp->linktype);
-				idbp->snaplen = SWAPLONG(idbp->snaplen);
+				idbp->linktype = PCAP_BSWAP_16(idbp->linktype);
+				idbp->snaplen = PCAP_BSWAP_32(idbp->snaplen);
 			}
 
 			/*
@@ -1449,9 +1456,9 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 			 */
 			if (p->swapped) {
 				shbp->byte_order_magic =
-				    SWAPLONG(shbp->byte_order_magic);
+				    PCAP_BSWAP_32(shbp->byte_order_magic);
 				shbp->major_version =
-				    SWAPSHORT(shbp->major_version);
+				    PCAP_BSWAP_16(shbp->major_version);
 			}
 
 			/*
@@ -1467,7 +1474,7 @@ pcap_ng_next_packet(pcap_t *p, struct pcap_pkthdr *hdr, u_char **data)
 				 */
 				break;
 
-			case SWAPLONG(BYTE_ORDER_MAGIC):
+			case PCAP_BSWAP_32(BYTE_ORDER_MAGIC):
 				/*
 				 * Byte order changes.
 				 */

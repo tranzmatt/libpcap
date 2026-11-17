@@ -255,6 +255,22 @@ pcap_stats_npf(pcap_t *p, struct pcap_stat *ps)
 		    GetLastError(), "PacketGetStats error");
 		return (-1);
 	}
+
+	/*
+	 * "ps_recv" counts only packets that *passed* the
+	 * filter, not packets that didn't pass the filter.
+	 * This includes packets later dropped because we
+	 * ran out of buffer space.
+	 *
+	 * "ps_drop" counts packets dropped because we ran
+	 * out of buffer space.  It doesn't count packets
+	 * dropped by the interface driver.  It counts only
+	 * packets that passed the filter.
+	 *
+	 * Both statistics include packets not yet read from
+	 * the kernel by libpcap, and thus not yet seen by
+	 * the application.
+	 */
 	ps->ps_recv = bstats.bs_recv;
 	ps->ps_drop = bstats.bs_drop;
 
@@ -709,7 +725,8 @@ pcap_read_npf(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		 */
 		if (pw->filtering_in_kernel ||
 		    p->fcode.bf_insns == NULL ||
-		    pcapint_filter(p->fcode.bf_insns, datap, bhp->bh_datalen, caplen)) {
+		    pcapint_filter(p->fcode.bf_insns, p->fcode.bf_len,
+		                   datap, bhp->bh_datalen, caplen)) {
 #ifdef ENABLE_REMOTE
 			switch (p->rmt_samp.method) {
 

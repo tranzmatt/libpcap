@@ -478,7 +478,6 @@ if(WIN32)
     option(USE_STATIC_RT "Use static Runtime" ON)
 endif(WIN32)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
-set(dpdk_ROOT "" CACHE PATH "Path to directory with include and lib subdirectories for DPDK")
 if(WIN32)
     set(Packet_ROOT "" CACHE PATH "Path to directory with include and lib subdirectories for packet.dll")
 endif(WIN32)
@@ -520,19 +519,13 @@ option(DISABLE_BLUETOOTH "Disable Bluetooth sniffing support" OFF)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
    CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR
+   CMAKE_SYSTEM_NAME STREQUAL "MidnightBSD" OR
    CMAKE_SYSTEM_NAME STREQUAL "QNX" OR
    WIN32)
     option(DISABLE_NETMAP "Disable netmap support" OFF)
 else()
     set(DISABLE_NETMAP ON)
 endif()
-
-#
-# Require that DPDK support be explicitly enabled, as the code is
-# immensely hard to keep compiling for every random API change
-# the DPDK folks make.
-#
-set(DISABLE_DPDK ON)
 
 #
 # We don't support D-Bus sniffing on macOS; see
@@ -722,6 +715,7 @@ endif(NOT HAVE_UNISTD_H)
 if(NOT WIN32)
     check_include_file(netinet/if_ether.h HAVE_NETINET_IF_ETHER_H)
 endif(NOT WIN32)
+check_include_file(sysexits.h HAVE_SYSEXITS_H)
 
 #
 # Check for various system functions.  These are not compiler builtins, so it
@@ -826,6 +820,28 @@ if (NOT CMAKE_CROSSCOMPILING)
     libpcap would not work correctly even if it managed to compile."
         )
     endif()
+
+    #
+    # Require a proof of working atexit(3), same as in Autoconf.
+    #
+    check_c_source_runs("
+    #include <stdlib.h>
+
+    static void exitfunc()
+    {
+      return;
+    }
+
+    int main()
+    {
+      return atexit(exitfunc);
+    }
+    "
+        ATEXIT_WORKS
+    )
+    if(NOT ATEXIT_WORKS)
+        message(FATAL_ERROR "atexit(3) is broken, try another compiler.")
+    endif()
 else()
     message(STATUS "Skipped SUITABLE_SNPRINTF because cross-compiling.")
 endif()
@@ -907,9 +923,9 @@ else(WIN32)
         #
         cmake_push_check_state()
         set(CMAKE_REQUIRED_LIBRARIES nsl)
-        check_library_exists(socket getaddrinfo "" LIBSOCKET_HAS_GETADDRINFO)
+        check_library_exists(socket getaddrinfo "" LIBSOCKET_LIBNSL_HAVE_GETADDRINFO)
         cmake_pop_check_state()
-        if(LIBSOCKET_HAS_GETADDRINFO)
+        if(LIBSOCKET_LIBNSL_HAVE_GETADDRINFO)
             #
             # OK, we found it in libsocket.
             #
@@ -917,7 +933,7 @@ else(WIN32)
             set(LIBS "-lsocket -lnsl ${LIBS}")
             set(LIBS_STATIC "-lsocket -lnsl ${LIBS_STATIC}")
             set(LIBS_PRIVATE "-lsocket -lnsl ${LIBS_PRIVATE}")
-        else(LIBSOCKET_HAS_GETADDRINFO)
+        else(LIBSOCKET_LIBNSL_HAVE_GETADDRINFO)
             #
             # Not found in libsocket; test for it in libnetwork, which
             # is where it is in Haiku.
@@ -936,11 +952,22 @@ else(WIN32)
                 set(LIBS_PRIVATE "-lnetwork ${LIBS_PRIVATE}")
             else(LIBNETWORK_HAS_GETADDRINFO)
                 #
-                # We didn't find it.
+                # Same as in Autoconf.
                 #
-                message(FATAL_ERROR "getaddrinfo is required, but wasn't found")
+                check_library_exists(socket getaddrinfo "" LIBSOCKET_HAS_GETADDRINFO)
+                if(LIBSOCKET_HAS_GETADDRINFO)
+                    set(PCAP_LINK_LIBRARIES socket ${PCAP_LINK_LIBRARIES})
+                    set(LIBS "-lsocket ${LIBS}")
+                    set(LIBS_STATIC "-lsocket ${LIBS_STATIC}")
+                    set(LIBS_PRIVATE "-lsocket ${LIBS_PRIVATE}")
+                else(LIBSOCKET_HAS_GETADDRINFO)
+                    #
+                    # We didn't find it.
+                    #
+                    message(FATAL_ERROR "getaddrinfo is required, but wasn't found")
+                endif(LIBSOCKET_HAS_GETADDRINFO)
             endif(LIBNETWORK_HAS_GETADDRINFO)
-        endif(LIBSOCKET_HAS_GETADDRINFO)
+        endif(LIBSOCKET_LIBNSL_HAVE_GETADDRINFO)
 
         #
         # We require a version of recvmsg() that conforms to the Single
@@ -2127,8 +2154,8 @@ else(WIN32)
                 set(REQUIRES_PRIVATE "${LIBNL_PACKAGE_NAME} ${REQUIRES_PRIVATE}")
             else()
                 cmake_push_check_state()
-                set(CMAKE_REQUIRED_LIBRARIES nl-3)
-                check_function_exists(nl_socket_alloc HAVE_LIBNL)
+                set(CMAKE_REQUIRED_LIBRARIES libnl-genl-3)
+                check_function_exists(genl_connect HAVE_LIBNL)
                 cmake_pop_check_state()
                 if(HAVE_LIBNL)
                     #
@@ -2459,57 +2486,6 @@ main(void)
     endif(PCAP_SUPPORT_NETMAP)
 endif()
 
-# Check for DPDK sniffing support
-if(NOT DISABLE_DPDK)
-    find_package(dpdk)
-    if(dpdk_FOUND)
-        #
-        # We call rte_eth_dev_count_avail(), and older versions of DPDK
-        # didn't have it, so check for it.
-        #
-        cmake_push_check_state()
-        set(CMAKE_REQUIRED_INCLUDES ${dpdk_INCLUDE_DIRS})
-        set(CMAKE_REQUIRED_LIBRARIES ${dpdk_LIBRARIES})
-        check_function_exists(rte_eth_dev_count_avail HAVE_RTE_ETH_DEV_COUNT_AVAIL)
-        cmake_pop_check_state()
-        if(HAVE_RTE_ETH_DEV_COUNT_AVAIL)
-            set(DPDK_C_FLAGS "-march=native")
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${DPDK_C_FLAGS}")
-            include_directories(AFTER ${dpdk_INCLUDE_DIRS})
-            link_directories(AFTER ${dpdk_LIBRARIES})
-            set(PCAP_LINK_LIBRARIES ${PCAP_LINK_LIBRARIES} ${dpdk_LIBRARIES})
-            set(LIBS "${LIBS} ${dpdk_LIBS}")
-            set(LIBS_STATIC "${LIBS_STATIC} ${dpdk_LIBS_STATIC}")
-            set(REQUIRES_PRIVATE "${REQUIRES_PRIVATE} ${dpdk_PACKAGE_NAME}")
-            set(PROJECT_SOURCE_LIST_C ${PROJECT_SOURCE_LIST_C} pcap-dpdk.c)
-            set(PCAP_SUPPORT_DPDK TRUE)
-
-            #
-            # Check whether the rte_ether.h file defines
-            # struct ether_addr or struct rte_ether_addr.
-            #
-            # ("API compatibility?  That's for losers!")
-            #
-            cmake_push_check_state()
-            set(CMAKE_REQUIRED_INCLUDES ${dpdk_INCLUDE_DIRS})
-            set(CMAKE_EXTRA_INCLUDE_FILES rte_ether.h)
-            check_type_size("struct rte_ether_addr" STRUCT_RTE_ETHER_ADDR)
-            cmake_pop_check_state()
-
-            #
-            # Same as in Autoconf.
-            #
-            message(STATUS "building with DPDK")
-        else()
-            #
-            # Same as in Autoconf.
-            #
-            message(STATUS "building without DPDK (present, but cannot be used)")
-        endif()
-    # Else: Finddpdk.cmake has already printed the diagnostics.
-    endif()
-endif()
-
 # Check for Bluetooth sniffing support
 if(NOT DISABLE_BLUETOOTH)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -2591,7 +2567,7 @@ if(NOT DISABLE_DBUS)
         set(PCAP_LINK_LIBRARIES ${PCAP_LINK_LIBRARIES} ${DBUS_LIBRARY_FULLPATHS})
 
         #
-        # Get library information for DPDK.
+        # Get library information for D-Bus.
         #
         pkg_get_link_info(DBUS dbus-1)
         set(LIBS "${LIBS} ${DBUS_LIBS}")
@@ -2886,6 +2862,54 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/.devel OR EXISTS ${CMAKE_BINARY_DIR}/.deve
         check_and_add_compiler_option(-Wused-but-marked-unused)
     endif()
 endif()
+
+#
+# To get a correct builtin test result, the source must be compiled and linked,
+# which in CMake means check_c_source_compiles().
+#
+# Different builtins require different methods of testing, see the comments
+# about HAVE_BUILTIN_BSWAPnn in pcap-util.h and HAVE_BUILTIN_CTZ in optimize.c.
+#
+check_c_source_compiles(
+"int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap16(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+"
+    HAVE_BUILTIN_BSWAP16)
+
+check_c_source_compiles(
+"int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap32(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+"
+    HAVE_BUILTIN_BSWAP32)
+
+check_c_source_compiles(
+"int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap64(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+"
+    HAVE_BUILTIN_BSWAP64)
+
+check_c_source_compiles("int main(void) {return __builtin_ctz(1);}" HAVE_BUILTIN_CTZ)
 
 #
 # Suppress some warnings we get with MSVC even without /Wall.

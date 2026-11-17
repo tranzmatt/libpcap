@@ -144,7 +144,7 @@ struct bpf_program {
 #define		BPF_B		0x10
 /*				0x18	reserved; used by BSD/OS */
 #define BPF_MODE(code)	((code) & 0xe0)
-#define		BPF_IMM	0x00
+#define		BPF_IMM		0x00
 #define		BPF_ABS		0x20
 #define		BPF_IND		0x40
 #define		BPF_MEM		0x60
@@ -192,7 +192,7 @@ struct bpf_program {
 #define		BPF_K		0x00
 #define		BPF_X		0x08
 
-/* ret - BPF_K and BPF_X also apply */
+/* ret - BPF_K also applies */
 #define BPF_RVAL(code)	((code) & 0x18)
 #define		BPF_A		0x10
 /*				0x18	reserved */
@@ -256,11 +256,11 @@ struct bpf_insn {
 #ifdef BPF_STMT
 #undef BPF_STMT
 #endif
-#define BPF_STMT(code, k) { (u_short)(code), 0, 0, k }
+#define BPF_STMT(code, k) { (u_short)(code), 0, 0, (k) }
 #ifdef BPF_JUMP
 #undef BPF_JUMP
 #endif
-#define BPF_JUMP(code, k, jt, jf) { (u_short)(code), jt, jf, k }
+#define BPF_JUMP(code, k, jt, jf) { (u_short)(code), (jt), (jf), (k) }
 
 PCAP_AVAILABLE_0_4
 PCAP_DEPRECATED("use pcap_offline_filter()")
@@ -276,7 +276,8 @@ PCAP_AVAILABLE_0_6
 PCAP_API void	bpf_dump(const struct bpf_program *, int);
 
 /*
- * Number of scratch memory words (for BPF_LD|BPF_MEM and BPF_ST).
+ * Number of scratch memory registers (for "ld M[k]", "ldx M[k]", "st M[k]" and
+ * "stx M[k]").
  */
 #define BPF_MEMWORDS 16
 

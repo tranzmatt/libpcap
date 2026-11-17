@@ -474,6 +474,68 @@ pcapint_create_interface(const char *device _U_, char *ebuf)
 	return (p);
 }
 
+#ifdef __APPLE__
+/*
+ * Check whether a named device exists.
+ *
+ * Returns 0 if the device exists and a PCAP_ERROR_ code, filling
+ * in error, if it doesn't exist or if the attempt to check fails.
+ * PCAP_ERROR_NO_SUCH_DEVICE indicates that the device doesn't
+ * exist; other errors indicate that the attempt to check failed.
+ */
+static int
+check_device_exists(const char *name, char *errbuf)
+{
+	int fd;
+	int status;
+	struct ifreq ifr;
+
+	if (strlen(name) >= sizeof(ifr.ifr_name)) {
+		/* The name is too long, so it can't possibly exist. */
+		return (PCAP_ERROR_NO_SUCH_DEVICE);
+	}
+
+	/*
+	 * Attempt to pen a socket on which we can do an ioctl to
+	 * check whether the device exists.
+	 */
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd == -1) {
+		/* That failed; report that as the error. */
+		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "Can't open socket to check whether a device exists");
+		return (PCAP_ERROR);
+	}
+
+	(void)pcapint_strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	status = ioctl(fd, SIOCGIFFLAGS, (caddr_t)&ifr);
+
+	if (status < 0 && (errno == ENXIO || errno == EINVAL)) {
+		/*
+		 * macOS and *BSD return one of those two errors if
+		 * the device doesn't exist.
+		 *
+		 * Don't fill in an error, as this is an "expected"
+		 * condition; this routine's purpose is to test
+		 * whether a device exists, and "it doesn't exist"
+		 * is an answer, not an indication that we couldn't
+		 * determine whether it exists.
+		 */
+		close(fd);
+		return (PCAP_ERROR_NO_SUCH_DEVICE);
+	}
+
+	/*
+	 * Either we were able to fetch the interface flags, indicating
+	 * that it exists, or we weren't able to fetch them but got an
+	 * error *other* than "there is no such device", which we
+	 * treat as an indication that the device exists.
+	 */
+	close(fd);
+	return (0);
+}
+#endif
+
 /*
  * On success, returns a file descriptor for a BPF device.
  * On failure, returns a PCAP_ERROR_ value, and sets p->errbuf.
@@ -864,47 +926,6 @@ bpf_open_and_bind(const char *name, char *errbuf)
 	return (fd);
 }
 
-#ifdef __APPLE__
-static int
-device_exists(int fd, const char *name, char *errbuf)
-{
-	int status;
-	struct ifreq ifr;
-
-	if (strlen(name) >= sizeof(ifr.ifr_name)) {
-		/* The name is too long, so it can't possibly exist. */
-		return (PCAP_ERROR_NO_SUCH_DEVICE);
-	}
-	(void)pcapint_strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
-	status = ioctl(fd, SIOCGIFFLAGS, (caddr_t)&ifr);
-
-	if (status < 0) {
-		if (errno == ENXIO || errno == EINVAL) {
-			/*
-			 * macOS and *BSD return one of those two
-			 * errors if the device doesn't exist.
-			 * Don't fill in an error, as this is
-			 * an "expected" condition.
-			 */
-			return (PCAP_ERROR_NO_SUCH_DEVICE);
-		}
-
-		/*
-		 * Some other error - provide a message for it, as
-		 * it's "unexpected".
-		 */
-		pcapint_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE, errno,
-		    "Can't get interface flags on %s", name);
-		return (PCAP_ERROR);
-	}
-
-	/*
-	 * The device exists.
-	 */
-	return (0);
-}
-#endif
-
 #ifdef BIOCGDLTLIST
 static int
 get_dlt_list(int fd, int v, struct bpf_dltlist *bdlp, char *ebuf)
@@ -991,8 +1012,8 @@ static int
 pcap_can_set_rfmon_bpf(pcap_t *p)
 {
 	struct utsname osinfo;
-	int fd;
 #ifdef BIOCGDLTLIST
+	int fd;
 	struct bpf_dltlist bdl;
 	int err;
 #endif
@@ -1045,21 +1066,13 @@ pcap_can_set_rfmon_bpf(pcap_t *p)
 			 */
 			return (0);
 		}
-		fd = socket(AF_INET, SOCK_DGRAM, 0);
-		if (fd == -1) {
-			pcapint_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
-			    errno, "socket");
-			return (PCAP_ERROR);
-		}
 		if (pcapint_asprintf(&wlt_name, "wlt%s", p->opt.device + 2) == -1) {
 			pcapint_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
 			    errno, "malloc");
-			close(fd);
 			return (PCAP_ERROR);
 		}
-		status = device_exists(fd, wlt_name, p->errbuf);
+		status = check_device_exists(wlt_name, p->errbuf);
 		free(wlt_name);
-		close(fd);
 		if (status != 0) {
 			if (status == PCAP_ERROR_NO_SUCH_DEVICE)
 				return (0);
@@ -1394,7 +1407,8 @@ pcap_read_bpf(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 #endif
 		 */
 		if (pb->filtering_in_kernel ||
-		    pcapint_filter(p->fcode.bf_insns, datap, bhp->bh_datalen, caplen)) {
+		    pcapint_filter(p->fcode.bf_insns, p->fcode.bf_len,
+		                   datap, bhp->bh_datalen, caplen)) {
 			struct pcap_pkthdr pkthdr;
 #ifdef BIOCSTSTAMP
 			struct bintime bt;
@@ -1406,7 +1420,14 @@ pcap_read_bpf(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 
 				bintime2timespec(&bt, &ts);
 				pkthdr.ts.tv_sec = ts.tv_sec;
-				pkthdr.ts.tv_usec = ts.tv_nsec;
+				/*
+				 * On QNX 8.0 the former (timeval.tv_usec) is
+				 * an int via suseconds_t and the latter
+				 * (timespec.tv_nsec) is a long.  The value is
+				 * supposed to be in the [0 .. 999999999]
+				 * interval.
+				 */
+				pkthdr.ts.tv_usec = (suseconds_t)ts.tv_nsec;
 			} else {
 				struct timeval tv;
 
@@ -1795,7 +1816,6 @@ pcap_cleanup_bpf(pcap_t *p)
 static int
 check_setif_failure(pcap_t *p, int error)
 {
-	int fd;
 	int err;
 
 	if (error == PCAP_ERROR_NO_SUCH_DEVICE) {
@@ -1810,52 +1830,32 @@ check_setif_failure(pcap_t *p, int error)
 			 * "enN" device; if that device exists, return
 			 * "monitor mode not supported on the device".
 			 */
-			fd = socket(AF_INET, SOCK_DGRAM, 0);
-			if (fd != -1) {
-				char *en_name;
+			char *en_name;
 
-				if (pcapint_asprintf(&en_name, "en%s",
-				    p->opt.device + 3) == -1) {
-					/*
-					 * We can't find out whether there's
-					 * an underlying "enN" device, so
-					 * just report "no such device".
-					 */
-					pcapint_fmt_errmsg_for_errno(p->errbuf,
-					    PCAP_ERRBUF_SIZE, errno,
-					    "malloc");
-					close(fd);
-					return (PCAP_ERROR_NO_SUCH_DEVICE);
-				}
-				err = device_exists(fd, en_name, p->errbuf);
-				free(en_name);
-				if (err != 0) {
-					if (err == PCAP_ERROR_NO_SUCH_DEVICE) {
-						/*
-						 * The underlying "enN" device
-						 * exists, but there's no
-						 * corresponding "wltN" device;
-						 * that means that the "enN"
-						 * device doesn't support
-						 * monitor mode, probably
-						 * because it's an Ethernet
-						 * device rather than a
-						 * wireless device.
-						 */
-						err = PCAP_ERROR_RFMON_NOTSUP;
-					}
-				}
-				close(fd);
-			} else {
+			if (pcapint_asprintf(&en_name, "en%s",
+			    p->opt.device + 3) == -1) {
 				/*
-				 * We can't find out whether there's
-				 * an underlying "enN" device, so
-				 * just report "no such device".
+				 * We don't have enough memory to
+				 * construct a string for the name of
+				 * the "enN" device.
 				 */
-				err = PCAP_ERROR_NO_SUCH_DEVICE;
 				pcapint_fmt_errmsg_for_errno(p->errbuf,
-				    errno, PCAP_ERRBUF_SIZE,
-				    "socket() failed");
+				    PCAP_ERRBUF_SIZE, errno,
+				    "malloc");
+				return (PCAP_ERROR);
+			}
+			err = check_device_exists(en_name, p->errbuf);
+			free(en_name);
+			if (err == PCAP_ERROR_NO_SUCH_DEVICE) {
+				/*
+				 * The underlying "enN" device exists,
+				 * but there's no corresponding "wltN"
+				 * device; that means that the "enN"
+				 * device doesn't support monitor mode,
+				 * probably because it's an Ethernet
+				 * device rather than a wireless device.
+				 */
+				err = PCAP_ERROR_RFMON_NOTSUP;
 			}
 			return (err);
 		}
@@ -1906,7 +1906,6 @@ pcap_activate_bpf(pcap_t *p)
 	int fd;
 	struct bpf_version bv;
 #ifdef __APPLE__
-	int sockfd;
 	char *wltdev = NULL;
 #endif
 #ifdef BIOCGDLTLIST
@@ -2005,32 +2004,16 @@ pcap_activate_bpf(pcap_t *p)
 					 * Not an enN device; check
 					 * whether the device even exists.
 					 */
-					sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-					if (sockfd != -1) {
-						status = device_exists(sockfd,
-						    p->opt.device, p->errbuf);
-						if (status == 0) {
-							/*
-							 * The device exists,
-							 * but it's not an
-							 * enN device; that
-							 * means it doesn't
-							 * support monitor
-							 * mode.
-							 */
-							status = PCAP_ERROR_RFMON_NOTSUP;
-						}
-						close(sockfd);
-					} else {
+					status = check_device_exists(p->opt.device,
+					    p->errbuf);
+					if (status == 0) {
 						/*
-						 * We can't find out whether
-						 * the device exists, so just
-						 * report "no such device".
+						 * The device exists, but
+						 * it's not an "enN" device;
+						 * that means it doesn't
+						 * support monitor mode.
 						 */
-						status = PCAP_ERROR_NO_SUCH_DEVICE;
-						pcapint_fmt_errmsg_for_errno(p->errbuf,
-						    PCAP_ERRBUF_SIZE, errno,
-						    "socket() failed");
+						status = PCAP_ERROR_RFMON_NOTSUP;
 					}
 					goto bad;
 				}

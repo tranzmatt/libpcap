@@ -7,7 +7,7 @@ add_custom_target(testprogs)
 
 macro(add_test_executable _executable)
   add_executable(${_executable} EXCLUDE_FROM_ALL
-    ${_executable}.c ${PROJECT_SOURCE_LIST_WIN32_C})
+    ${_executable}.c test-util.c ${PROJECT_SOURCE_LIST_WIN32_C})
   if(NOT C_ADDITIONAL_FLAGS STREQUAL "")
     set_target_properties(${_executable} PROPERTIES
       COMPILE_FLAGS ${C_ADDITIONAL_FLAGS})
@@ -38,6 +38,12 @@ add_test_executable(versiontest)
 add_test_executable(writecaptest)
 
 if(NOT WIN32)
+  # pcapint_opcode_without_k()
+  # pcapint_valid_insn()
+  add_test_executable(enumeratetest)
+  # On Windows, pcap_fileno() is deprecated and pcap_get_selectable_fd()
+  # is not available
+  add_test_executable(opendeadtest)
   add_test_executable(selpolltest)
   # Fails to link on Windows:
   # translatetest.obj : error LNK2019: unresolved external symbol

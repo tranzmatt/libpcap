@@ -103,16 +103,6 @@ suncc-5.14/SunOS-5.10|suncc-5.15/SunOS-5.10)
     #   returning, might return
     LIBPCAP_TAINTED=yes
     ;;
-*/QNX-*)
-    # pcap-bpf.c:1409:28: warning: implicit conversion loses integer precision:
-    #   'long' to 'suseconds_t' (aka 'int')
-    # pcap-netmap.c:50: warning: "IFF_PPROMISC" redefined
-    #   In file included from .../qnx803/target/qnx/usr/include/net/netmap_user.h:93,
-    #                    from ./pcap-netmap.c:38:
-    #   .../qnx803/target/qnx/usr/include/net/if.h:167: note: this is the
-    #   location of the previous definition
-    LIBPCAP_TAINTED=yes
-    ;;
 *)
     ;;
 esac
@@ -184,7 +174,7 @@ elif [ "$CMAKE" = no ]; then
     export FILTERTEST_BIN
     TRANSLATETEST_BIN="$VALGRIND_CMD testprogs/translatetest"
     export TRANSLATETEST_BIN
-    run_after_echo "$MAKE_BIN" -s check
+    LANG=C run_after_echo "$MAKE_BIN" -s check
     run_after_echo $VALGRIND_CMD ${VALGRIND_CMD:+--suppressions=testprogs/findalldevstest.supp} testprogs/findalldevstest
     [ "$TEST_RELEASETAR" = yes ] && run_after_echo "$MAKE_BIN" releasetar
 else
@@ -193,7 +183,7 @@ else
     export FILTERTEST_BIN
     TRANSLATETEST_BIN="$VALGRIND_CMD run/translatetest"
     export TRANSLATETEST_BIN
-    run_after_echo "$MAKE_BIN" -s check
+    LANG=C run_after_echo "$MAKE_BIN" -s check
     run_after_echo $VALGRIND_CMD ${VALGRIND_CMD:+--suppressions=../testprogs/findalldevstest.supp} run/findalldevstest
 fi
 handle_matrix_debug

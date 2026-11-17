@@ -1,6 +1,7 @@
-// for "pcap-int.h"
 #include <config.h>
 
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,12 +13,6 @@
   #include <unistd.h>
 #endif
 
-#if defined(_WIN32) || defined(__QNX__)
-  #include "unix.h"
-#else
-  #include <sysexits.h>
-#endif
-
 #include "pcap/pcap.h"
 // pcap_nametoeproto(), pcap_nametollc() and pcapint_xdtoi()
 #include "pcap/namedb.h"
@@ -25,6 +20,9 @@
 #include "nametoaddr.h"
 // pcapint_parsesrcstr_ex() and pcapint_createsrcstr_ex()
 #include "pcap-int.h"
+#include "pcap-util.h" // PCAP_BSWAP_16() etc.
+#include "portability.h"
+#include "test-util.h"
 
 static const char *program_name;
 
@@ -178,7 +176,7 @@ errcode(const int e)
 }
 
 static int
-test_pcapint_get_decint_endp(const char *arg)
+test_pcapint_get_decuint_endp(const char *arg)
 {
 	char *endp;
 	unsigned output;
@@ -193,7 +191,7 @@ test_pcapint_get_decint_endp(const char *arg)
 }
 
 static int
-test_pcapint_get_decint_noendp(const char *arg)
+test_pcapint_get_decuint_noendp(const char *arg)
 {
 	unsigned output;
 	int res = pcapint_get_decuint(arg, NULL, &output);
@@ -203,6 +201,110 @@ test_pcapint_get_decint_noendp(const char *arg)
 	}
 	printf("OK: %u\n", output);
 	return EX_OK;
+}
+
+static int
+test_pcap_statustostr(const char *arg)
+{
+	errno = 0;
+	long i = strtol(arg, NULL, 10);
+	if (errno) {
+		fprintf(stderr, "ERROR: failed parsing \"%s\" (%s)\n", arg, strerror(errno));
+		return EX_USAGE;
+	}
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%ld", i);
+	if (strcmp(buf, arg)) {
+		fprintf(stderr, "ERROR: failed parsing \"%s\"\n", arg);
+		return EX_USAGE;
+	}
+	if (i < INT32_MIN || i > INT32_MAX) {
+		fprintf(stderr, "ERROR: value \"%s\" is out of range\n", arg);
+		return EX_USAGE;
+	}
+	printf("OK: %s\n", pcap_statustostr((int)i));
+	return EX_OK;
+}
+
+static int
+parse_hex(const char *arg, const uint64_t maxval, uint64_t *result)
+{
+	errno = 0;
+	unsigned long long i = strtoull(arg, NULL, 16);
+	if (errno || i > maxval)
+		return 1;
+	*result = (uint64_t)i;
+	return 0;
+}
+
+static int
+test_PCAP_BSWAP_16(const char *arg)
+{
+	uint64_t i;
+	if (parse_hex(arg, UINT16_MAX, &i))
+		goto fail;
+	char buf[64];
+	snprintf(buf, sizeof(buf), "0x%04x", (uint16_t)i);
+	if (pcapint_strcasecmp(buf, arg))
+		goto fail;
+	printf("OK: 0x%04x\n", PCAP_BSWAP_16(i));
+	return EX_OK;
+fail:
+	fprintf(stderr, "ERROR: failed parsing \"%s\"\n", arg);
+	return EX_USAGE;
+}
+
+static int
+test_PCAP_BSWAP_32(const char *arg)
+{
+	uint64_t i;
+	if (parse_hex(arg, UINT32_MAX, &i))
+		goto fail;
+	char buf[64];
+	snprintf(buf, sizeof(buf), "0x%08x", (uint32_t)i);
+	if (pcapint_strcasecmp(buf, arg))
+		goto fail;
+	printf("OK: 0x%08x\n", PCAP_BSWAP_32(i));
+	return EX_OK;
+fail:
+	fprintf(stderr, "ERROR: failed parsing \"%s\"\n", arg);
+	return EX_USAGE;
+}
+
+static int
+test_PCAP_BSWAP_64(const char *arg)
+{
+	uint64_t i;
+	if (parse_hex(arg, UINT64_MAX, &i))
+		goto fail;
+	char buf[64];
+	snprintf(buf, sizeof(buf), "0x%016" PRIx64, i);
+	if (pcapint_strcasecmp(buf, arg))
+		goto fail;
+	printf("OK: 0x%016" PRIx64 "\n", PCAP_BSWAP_64(i));
+	return EX_OK;
+fail:
+	fprintf(stderr, "ERROR: failed parsing \"%s\"\n", arg);
+	return EX_USAGE;
+}
+
+static int
+test_pcapint_lowest_set_bit(const char *arg)
+{
+	uint64_t i;
+	if (parse_hex(arg, UINT32_MAX, &i))
+		goto fail;
+	if (i == 0)
+		goto fail; // The function argument must not be 0.
+	char buf[64];
+	snprintf(buf, sizeof(buf), "0x%08x", (uint32_t)i);
+	if (pcapint_strcasecmp(buf, arg))
+		goto fail;
+	printf("OK: %u\n", pcapint_lowest_set_bit((uint32_t)i));
+	return EX_OK;
+fail:
+	fprintf(stderr, "ERROR: failed parsing \"%s\"\n", arg);
+	return EX_USAGE;
 }
 
 static const struct {
@@ -218,8 +320,13 @@ static const struct {
 	{"pcapint_atoan", 0, test_pcapint_atoan, "ARCnet address"},
 	{"pcap_ether_aton", 0, test_pcap_ether_aton, "MAC-48 address"},
 	{"pcapint_parsesrcstr_ex", 1, test_pcapint_parsesrcstr_ex, "source string"},
-	{"pcapint_get_decuint/endp", 1, test_pcapint_get_decint_endp, "unsigned integer"},
-	{"pcapint_get_decuint/noendp", 1, test_pcapint_get_decint_noendp, "unsigned integer"},
+	{"pcapint_get_decuint/endp", 1, test_pcapint_get_decuint_endp, "unsigned integer"},
+	{"pcapint_get_decuint/noendp", 1, test_pcapint_get_decuint_noendp, "unsigned integer"},
+	{"pcap_statustostr", 0, test_pcap_statustostr, "signed integer"},
+	{"PCAP_BSWAP_16", 0, test_PCAP_BSWAP_16, "0xXXXX"},
+	{"PCAP_BSWAP_32", 0, test_PCAP_BSWAP_32, "0xXXXXXXXX"},
+	{"PCAP_BSWAP_64", 0, test_PCAP_BSWAP_64, "0xXXXXXXXXXXXXXXXX"},
+	{"pcapint_lowest_set_bit", 0, test_pcapint_lowest_set_bit, "0xXXXXXXXX (must not be 0)"},
 };
 #define NUM_FUNCS (sizeof(testfunc) / sizeof(testfunc[0]))
 
@@ -253,15 +360,36 @@ usage_long(FILE *f)
 int
 main(int argc, char **argv)
 {
-	{
-		const char *cp = strrchr(argv[0], '/');
-		program_name = cp ? cp + 1 : argv[0];
-	}
+	program_name = set_program_name(argv[0]);
 
 	{
 		int op;
 		opterr = 0;
-		while ((op = getopt(argc, argv, "h")) != -1) {
+
+		/*
+		 * Currently, the only option we support is "-h",
+		 * which causes us to print a help message and exit
+		 * with a success error code.
+		 *
+		 * All other options are invalid, which causes us
+		 * to print a usage message and exit with an "invalid
+		 * usage" error code.
+		 *
+		 * This means that no code after the switch statement
+		 * is ever executed, which generates a warning from Sun C
+		 * if the outer control statement is "while", because
+		 * there would be "continue the loop" machine code after
+		 * the switch statement.
+		 *
+		 * Therefore, we use an "if" statement, to suppress that
+		 * warning.
+		 *
+		 * If we ever add options that do *not* cause us to
+		 * exit, the "if" should become a "while", as the warning
+		 * should no longer occur, and we may want to support
+		 * processing more than one option.
+		 */
+		if ((op = getopt(argc, argv, "h")) != -1) {
 			switch (op) {
 			case 'h':
 				usage_long(stdout);
@@ -270,6 +398,10 @@ main(int argc, char **argv)
 				usage_short(stderr);
 				exit(EX_USAGE);
 			}
+			/*
+			 * The end of this block is not reachable, which
+			 * generates the warning mentioned above.
+			 */
 		}
 		// At least the function name must be present.
 		if (argc < 2) {
@@ -280,7 +412,7 @@ main(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
-	char *funcname = argv[0];
+	const char *funcname = argv[0];
 	for (unsigned i = 0; i < NUM_FUNCS; i++) {
 		if (strcmp(testfunc[i].name, funcname))
 			continue;

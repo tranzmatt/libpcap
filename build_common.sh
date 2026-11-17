@@ -29,15 +29,17 @@ mktempdir_diy() {
 mktempdir() {
     mktempdir_prefix=${1:-tmp}
     case `os_id` in
-    Darwin-*|FreeBSD-*|NetBSD-*)
+    Darwin-*|FreeBSD-*|NetBSD-*|MidnightBSD-*|DragonFly-*)
         # In these operating systems mktemp(1) always appends an implicit
         # ".XXXXXXXX" suffix to the requested template when creating a
         # temporary directory.
         mktemp -d -t "$mktempdir_prefix"
         ;;
     SunOS-5.10|SunOS-5.11)
-        # Although the suffix is optional, specify it for consistent results.
-        mktemp -d -t "${mktempdir_prefix}.XXXXXXXX"
+        # In Solaris and illumos mktemp(1) the suffix is mandatory, at least
+        # three X'es are required in the suffix and at most six trailing X'es
+        # will be replaced with unique characters.
+        mktemp -d -t "${mktempdir_prefix}.XXXXXX"
         ;;
     SunOS-*|AIX-*)
         mktempdir_diy "$mktempdir_prefix"
@@ -45,6 +47,8 @@ mktempdir() {
     *)
         # At least Haiku, Linux and OpenBSD implementations require explicit
         # trailing X'es in the template, so make it the same suffix as above.
+        # QNX uses the Toybox implementation of mktemp(1), which too requires a
+        # suffix, also the suffix must include at least six trailing X'es.
         # XXX - is MSYS2 GNU-based, so that it would be like Linux?
         mktemp -d -t "${mktempdir_prefix}.XXXXXXXX"
         ;;
@@ -63,9 +67,14 @@ print_sysinfo() {
 cc_version_nocache() {
     : "${CC:?}"
     case `basename "$CC"` in
-    gcc*|egcc*|clang*|tcc*)
+    gcc*|egcc*|clang*)
         # GCC and Clang recognize --version, print to stdout and exit with 0.
         "$CC" --version
+        ;;
+    tcc*)
+        # Tiny C Compiler recognizes "-v" (also "--version" after release
+        # 0.9.27), prints to stdout and exits with 0.
+        "$CC" -v
         ;;
     xl*)
         # XL C 12.1 and 13.1 recognize "-qversion", print to stdout and exit
@@ -89,7 +98,7 @@ cc_version_nocache() {
             # Most likely Clang.
             "$CC" --version
             ;;
-        Linux-*|FreeBSD-*|NetBSD-*|OpenBSD-*)
+        Linux-*|FreeBSD-*|NetBSD-*|OpenBSD-*|MidnightBSD-*|DragonFly-*)
             # Most likely Clang or GCC.
             "$CC" --version
             ;;
@@ -152,8 +161,10 @@ cc_id_nocache() {
     fi
 
     # Examples of installed packages:
+    # "tcc version 0.9.27 (prerelease) (i386 Unidentified system)"
     # "tcc version 0.9.27 (x86_64 Linux)"
     # "tcc version 0.9.27 2023-07-05 mob@5b28165 (x86_64 OpenBSD)"
+    # "tcc version 0.9.28rc 2026-07-30 mob@2be0218b (x86_64 Linux)"
     # Example of a development version:
     # "tcc version 0.9.28rc 2024-04-28 mob@0aca8611 (x86_64 Linux)"
     cc_id_guessed=`echo "$cc_id_firstline" | sed 's/^.*tcc version \([0-9\.rc]*\).*$/tcc-\1/'`
@@ -178,6 +189,13 @@ cc_id_nocache() {
     # "gcc (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0"
     # "gcc (FreeBSD Ports Collection) 10.3.0"
     cc_id_guessed=`echo "$cc_id_firstline" | sed 's/^.* (.*) \([0-9\.]*\).*$/gcc-\1/'`
+    if [ "$cc_id_firstline" != "$cc_id_guessed" ]; then
+        echo "$cc_id_guessed"
+        return
+    fi
+
+    # "gcc 8.3 [DragonFly] Release/2019-02-22"
+    cc_id_guessed=`echo "$cc_id_firstline" | sed 's/^.* \([0-9\.]*\) \[.*\].*$/gcc-\1/'`
     if [ "$cc_id_firstline" != "$cc_id_guessed" ]; then
         echo "$cc_id_guessed"
         return
@@ -241,10 +259,10 @@ os_id() {
         : "${os_id_version:=`uname -v`}"
         echo "${os_id_version}.${os_id_release}"
         ;;
-    Darwin|GNU|OpenBSD|QNX|SunOS)
+    Darwin|GNU|OpenBSD|QNX|SunOS|MidnightBSD)
         echo "$os_id_release"
         ;;
-    FreeBSD|NetBSD|Linux)
+    FreeBSD|NetBSD|Linux|DragonFly)
         # Meaningful version is usually the substring before the first dash.
         # Or the first underscore.
         echo "$os_id_release" | sed 's/^\([0-9\.]*\).*$/\1/'

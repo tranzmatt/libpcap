@@ -152,6 +152,7 @@ usb_dev_add(pcap_if_list_t *devlistp, int n, char *err_str)
 		 * that would apply to a particular USB interface.
 		 */
 		if (pcapint_add_dev(devlistp, dev_name,
+		    PCAP_IF_NO_INJECT |
 		    PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
 		    "Raw USB traffic, all USB buses", err_str) == NULL)
 			return -1;
@@ -163,7 +164,9 @@ usb_dev_add(pcap_if_list_t *devlistp, int n, char *err_str)
 		 * PCAP_IF_CONNECTION_STATUS_DISCONNECTED?
 		 */
 		snprintf(dev_descr, sizeof(dev_descr), "Raw USB traffic, bus number %d", n);
-		if (pcapint_add_dev(devlistp, dev_name, 0, dev_descr, err_str) == NULL)
+		if (pcapint_add_dev(devlistp, dev_name,
+		    PCAP_IF_NO_INJECT,
+		    dev_descr, err_str) == NULL)
 			return -1;
 	}
 
@@ -715,8 +718,8 @@ usb_read_linux_bin(pcap_t *handle, int max_packets _U_, pcap_handler callback, u
 	pkth.ts.tv_usec = info.hdr->ts_usec;
 
 	if (handle->fcode.bf_insns == NULL ||
-	    pcapint_filter(handle->fcode.bf_insns, handle->buffer,
-	      pkth.len, pkth.caplen)) {
+	    pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+	                   handle->buffer, pkth.len, pkth.caplen)) {
 		handlep->packets_read++;
 		callback(user, &pkth, handle->buffer);
 		return 1;
@@ -903,8 +906,8 @@ usb_read_linux_mmap(pcap_t *handle, int max_packets, pcap_handler callback, u_ch
 			pkth.ts.tv_usec = hdr->ts_usec;
 
 			if (handle->fcode.bf_insns == NULL ||
-			    pcapint_filter(handle->fcode.bf_insns, (u_char*) hdr,
-			      pkth.len, pkth.caplen)) {
+			    pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+			                   (u_char*) hdr, pkth.len, pkth.caplen)) {
 				handlep->packets_read++;
 				callback(user, &pkth, (u_char*) hdr);
 				packets++;

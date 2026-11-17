@@ -35,11 +35,12 @@ The Regents of the University of California.  All rights reserved.\n";
  * how WaitForMultipleObjects() would work on the event handle for a
  * pcap_t.
  */
+#include <config.h>
+
 #include <pcap.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -48,14 +49,14 @@ The Regents of the University of California.  All rights reserved.\n";
 
 #include "pcap/funcattrs.h"
 
-static char *program_name;
+#include "portability.h"
+#include "test-util.h"
+
+static const char *program_name;
 
 /* Forwards */
 static void countme(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void PCAP_NORETURN usage(void);
-static void PCAP_NORETURN error(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-static void warning(const char *, ...) PCAP_PRINTFLIKE(1, 2);
-static char *copy_argv(char **);
 
 static pcap_t *pd;
 
@@ -64,7 +65,7 @@ main(int argc, char **argv)
 {
 	int op;
 	bpf_u_int32 localnet, netmask;
-	char *cp, *cmdbuf, *device;
+	char *cmdbuf, *device;
 	int doselect, dopoll, dotimeout, dononblock, quiet;
 	const char *mechanism;
 	struct bpf_program fcode;
@@ -74,6 +75,7 @@ main(int argc, char **argv)
 	const struct timeval *required_timeout;
 	int status;
 	int packet_count;
+	int exit_status = EX_OK;
 
 	device = NULL;
 	doselect = 0;
@@ -82,10 +84,7 @@ main(int argc, char **argv)
 	dotimeout = 0;
 	dononblock = 0;
 	quiet = 0;
-	if ((cp = strrchr(argv[0], '/')) != NULL)
-		program_name = cp + 1;
-	else
-		program_name = argv[0];
+	program_name = set_program_name(argv[0]);
 
 	opterr = 0;
 	while ((op = getopt(argc, argv, "i:sptnq")) != -1) {
@@ -124,25 +123,23 @@ main(int argc, char **argv)
 	}
 
 	if (doselect && dopoll) {
-		fprintf(stderr, "selpolltest: choose select (-s) or poll (-p), but not both\n");
-		return 1;
+		error(EX_USAGE, "choose select (-s) or poll (-p), but not both");
 	}
 	if (dotimeout && !doselect && !dopoll) {
-		fprintf(stderr, "selpolltest: timeout (-t) requires select (-s) or poll (-p)\n");
-		return 1;
+		error(EX_USAGE, "timeout (-t) requires select (-s) or poll (-p)");
 	}
 	if (device == NULL) {
 		if (pcap_findalldevs(&devlist, ebuf) == -1)
-			error("%s", ebuf);
+			error(EX_OSERR, "%s", ebuf);
 		if (devlist == NULL)
-			error("no interfaces available for capture");
+			error(EX_OSERR, "no interfaces available for capture");
 		device = strdup(devlist->name);
 		pcap_freealldevs(devlist);
 	}
 	*ebuf = '\0';
 	pd = pcap_open_live(device, 65535, 0, 1000, ebuf);
 	if (pd == NULL)
-		error("%s", ebuf);
+		error(EX_OSERR, "%s", ebuf);
 	else if (*ebuf)
 		warning("%s", ebuf);
 	if (pcap_lookupnet(device, &localnet, &netmask, ebuf) < 0) {
@@ -153,9 +150,9 @@ main(int argc, char **argv)
 	cmdbuf = copy_argv(&argv[optind]);
 
 	if (pcap_compile(pd, &fcode, cmdbuf, 1, netmask) < 0)
-		error("%s", pcap_geterr(pd));
+		error(EX_DATAERR, "%s", pcap_geterr(pd));
 	if (pcap_setfilter(pd, &fcode) < 0)
-		error("%s", pcap_geterr(pd));
+		error(EX_OSERR, "%s", pcap_geterr(pd));
 
 	if (doselect || dopoll) {
 		/*
@@ -169,7 +166,8 @@ main(int argc, char **argv)
 			    device, mechanism);
 			required_timeout = pcap_get_required_select_timeout(pd);
 			if (required_timeout == NULL)
-				error("select()/poll() isn't supported on %s, even with a timeout",
+				error(EX_OSERR,
+				    "select()/poll() isn't supported on %s, even with a timeout",
 				    device);
 
 			/*
@@ -191,7 +189,7 @@ main(int argc, char **argv)
 
 	if (dononblock) {
 		if (pcap_setnonblock(pd, 1, ebuf) == -1)
-			error("pcap_setnonblock failed: %s", ebuf);
+			error(EX_OSERR, "pcap_setnonblock failed: %s", ebuf);
 	}
 	if (doselect) {
 		for (;;) {
@@ -347,11 +345,11 @@ main(int argc, char **argv)
 		/*
 		 * Error.  Report it.
 		 */
-		(void)fprintf(stderr, "%s: pcap_dispatch: %s\n",
-		    program_name, pcap_geterr(pd));
+		warning("pcap_dispatch: %s", pcap_geterr(pd));
+		exit_status = EX_OSERR;
 	}
 	pcap_close(pd);
-	exit(status == -1 ? 1 : 0);
+	exit(exit_status);
 }
 
 static void
@@ -367,75 +365,5 @@ usage(void)
 {
 	(void)fprintf(stderr, "Usage: %s [ -sptnq ] [ -i interface ] [expression]\n",
 	    program_name);
-	exit(1);
-}
-
-/* VARARGS */
-static void
-error(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-	exit(1);
-	/* NOTREACHED */
-}
-
-/* VARARGS */
-static void
-warning(const char *fmt, ...)
-{
-	va_list ap;
-
-	(void)fprintf(stderr, "%s: WARNING: ", program_name);
-	va_start(ap, fmt);
-	(void)vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	if (*fmt) {
-		fmt += strlen(fmt);
-		if (fmt[-1] != '\n')
-			(void)fputc('\n', stderr);
-	}
-}
-
-/*
- * Copy arg vector into a new buffer, concatenating arguments with spaces.
- */
-static char *
-copy_argv(char **argv)
-{
-	char **p;
-	size_t len = 0;
-	char *buf;
-	char *src, *dst;
-
-	p = argv;
-	if (*p == 0)
-		return 0;
-
-	while (*p)
-		len += strlen(*p++) + 1;
-
-	buf = (char *)malloc(len);
-	if (buf == NULL)
-		error("copy_argv: malloc");
-
-	p = argv;
-	dst = buf;
-	while ((src = *p++) != NULL) {
-		while ((*dst++ = *src++) != '\0')
-			;
-		dst[-1] = ' ';
-	}
-	dst[-1] = '\0';
-
-	return buf;
+	exit(EX_USAGE);
 }

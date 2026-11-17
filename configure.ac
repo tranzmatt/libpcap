@@ -122,6 +122,8 @@ fi
 AC_SYS_LARGEFILE
 AC_FUNC_FSEEKO
 
+AC_CHECK_HEADERS_ONCE([sysexits.h])
+
 #
 # Get the size of a void *, to determine whether this is a 32-bit
 # or 64-bit build.
@@ -297,6 +299,38 @@ int main()
         AC_MSG_ERROR(
 [The snprintf(3) implementation in this libc is not suitable,
 libpcap would not work correctly even if it managed to compile.])
+    ],
+    [
+        AC_MSG_RESULT(not while cross-compiling)
+    ]
+)
+
+#
+# Require a proof of working atexit(3).
+#
+AC_MSG_CHECKING([whether atexit works])
+AC_RUN_IFELSE(
+    [
+        AC_LANG_SOURCE([[
+#include <stdlib.h>
+
+static void exitfunc()
+{
+  return;
+}
+
+int main()
+{
+  return atexit(exitfunc);
+}
+        ]])
+    ],
+    [
+        AC_MSG_RESULT([yes])
+    ],
+    [
+        AC_MSG_RESULT([no])
+        AC_MSG_ERROR([atexit(3) is broken, try another compiler.])
     ],
     [
         AC_MSG_RESULT(not while cross-compiling)
@@ -1211,16 +1245,6 @@ dag)
 	#
 	V_DEFS="$V_DEFS -DDAG_ONLY"
 	PLATFORM_C_SRC="pcap-dag.c"
-	xxx_only=yes
-	;;
-
-dpdk)
-	#
-	# --with-pcap=dpdk is the only way to get here, and it means
-	# "DPDK support but nothing else"
-	#
-	V_DEFS="$V_DEFS -DDPDK_ONLY"
-	PLATFORM_C_SRC="pcap-dpdk.c"
 	xxx_only=yes
 	;;
 
@@ -2357,6 +2381,87 @@ AC_SUBST(LN_S)
 AC_LBL_DEVEL(V_CCOPT)
 
 #
+# To get a correct builtin test result, the source must be compiled and linked,
+# which in Autoconf means AC_LINK_IFELSE().
+#
+# Different builtins require different methods of testing, see the comments
+# about HAVE_BUILTIN_BSWAPnn in pcap-util.h and HAVE_BUILTIN_CTZ in optimize.c.
+#
+AC_MSG_CHECKING([whether the compiler implements __builtin_bswap16()])
+AC_LINK_IFELSE(
+	[AC_LANG_SOURCE([[
+int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap16(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+	]])],
+	[
+		AC_MSG_RESULT(yes)
+		AC_DEFINE(HAVE_BUILTIN_BSWAP16, 1,
+			[Define to 1 if you have the '__builtin_bswap16' compiler builtin.])
+	],
+	[AC_MSG_RESULT(no)]
+)
+
+AC_MSG_CHECKING([whether the compiler implements __builtin_bswap32()])
+AC_LINK_IFELSE(
+	[AC_LANG_SOURCE([[
+int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap32(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+	]])],
+	[
+		AC_MSG_RESULT(yes)
+		AC_DEFINE(HAVE_BUILTIN_BSWAP32, 1,
+			[Define to 1 if you have the '__builtin_bswap32' compiler builtin.])
+	],
+	[AC_MSG_RESULT(no)]
+)
+
+AC_MSG_CHECKING([whether the compiler implements __builtin_bswap64()])
+AC_LINK_IFELSE(
+	[AC_LANG_SOURCE([[
+int main(int argc, char **argv)
+{
+	switch (argc) {
+	case __builtin_bswap64(0):
+		return 0;
+	default:
+		return 1;
+	}
+}
+	]])],
+	[
+		AC_MSG_RESULT(yes)
+		AC_DEFINE(HAVE_BUILTIN_BSWAP64, 1,
+			[Define to 1 if you have the '__builtin_bswap64' compiler builtin.])
+	],
+	[AC_MSG_RESULT(no)]
+)
+
+AC_MSG_CHECKING([whether the compiler implements __builtin_ctz()])
+AC_LINK_IFELSE(
+	[AC_LANG_PROGRAM([],[[return __builtin_ctz(1);]])],
+	[
+		AC_MSG_RESULT(yes)
+		AC_DEFINE(HAVE_BUILTIN_CTZ, 1,
+			[Define to 1 if you have the '__builtin_ctz' compiler builtin.])
+	],
+	[AC_MSG_RESULT(no)]
+)
+
+#
 # Check to see if the sockaddr struct has the 4.4 BSD sa_len member.
 #
 AC_CHECK_MEMBERS([struct sockaddr.sa_len],,,
@@ -2474,7 +2579,7 @@ AC_ARG_ENABLE([netmap],
 # In this block "yes" means the same as "ifpresent" in the DAG block above.
 # Windows is CMake-only.
 case "$host_os" in
-linux*|freebsd*|nto-qnx*)
+linux*|freebsd*|nto-qnx*|midnightbsd*)
 	;;
 *)
 	enable_netmap=no
@@ -2505,236 +2610,6 @@ AC_INCLUDES_DEFAULT
 	fi
 	AC_SUBST(PCAP_SUPPORT_NETMAP)
 fi
-
-# Check for DPDK support.
-AC_ARG_WITH([dpdk],
-AS_HELP_STRING([--with-dpdk@<:@=DIR@:>@],[include DPDK support (located in directory DIR, if supplied).  @<:@default=no@:>@]),
-[
-	if test "$withval" = no
-	then
-		# User doesn't want DPDK support.
-		want_dpdk=no
-	elif test "$withval" = yes
-	then
-		# User wants DPDK support but hasn't specified a directory.
-		want_dpdk=yes
-	else
-		# User wants DPDK support and has specified a directory,
-		# so use the provided value.
-		want_dpdk=yes
-		dpdk_dir=$withval
-	fi
-],[
-	if test "$V_PCAP" = dpdk; then
-		# User requested DPDK-only libpcap, so we'd better have
-		# the DPDK API.
-		want_dpdk=yes
-	elif test "$xxx_only" = yes; then
-		# User requested something-else-only pcap, so they don't
-		# want DPDK support.
-		want_dpdk=no
-	else
-		#
-		# User didn't explicitly request DPDK; don't give it
-		# to them without their consent, as the code is
-		# immensely hard to keep compiling for every random
-		# API change the DPDK folks make.
-		#
-		want_dpdk=no
-	fi
-])
-
-# Same as for DAG above.
-case "$host_os" in
-linux*|freebsd*)
-	;;
-*)
-	case "$want_dpdk" in
-	ifpresent)
-		want_dpdk=no
-		;;
-	yes)
-		AC_MSG_ERROR([cannot enable DPDK support (neither Linux nor FreeBSD)])
-		;;
-	esac
-	;;
-esac
-
-if test "$want_dpdk" != no; then
-	#
-	# The user didn't explicitly say they don't want DPDK,
-	# so see if we have it.
-	#
-	# We only try to find it using pkg-config; DPDK is *SO*
-	# complicated - DPDK 19.02, for example, has about 117(!)
-	# libraries, and the precise set of libraries required has
-	# changed over time - so attempting to guess which libraries
-	# you need, and hardcoding that in an attempt to find the
-	# libraries without DPDK, rather than relying on DPDK to
-	# tell you, with a .pc file, what libraries are needed,
-	# is *EXTREMELY* fragile and has caused some bug reports,
-	# so we're just not going to do it.
-	#
-	# If that causes a problem, the only thing we will do is
-	# accept an alternative way of finding the appropriate
-	# library set for the installed version of DPDK that is
-	# as robust as pkg-config (i.e., it had better work as well
-	# as pkg-config with *ALL* versions of DPDK that provide a
-	# libdpdk.pc file).
-	#
-	# If --with-dpdk={path} was specified, add {path}/pkgconfig
-	# to PKG_CONFIG_PATH, so we look for the .pc file there,
-	# first.
-	#
-	save_PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
-	if test -n "$dpdk_dir"; then
-		PKG_CONFIG_PATH="$dpdk_dir:$PKG_CONFIG_PATH"
-	fi
-	PKG_CHECK_MODULE(DPDK, libdpdk,
-	    [
-		found_dpdk=yes
-	    ])
-	PKG_CONFIG_PATH="$save_PKG_CONFIG_PATH"
-
-	#
-	# Did we find DPDK?
-	#
-	if test "$found_dpdk" = yes; then
-		#
-		# Found it.
-		#
-		# We call rte_eth_dev_count_avail(), and older versions
-		# of DPDK didn't have it, so check for it.
-		#
-		AC_LBL_SAVE_CHECK_STATE
-		CFLAGS="$CFLAGS $DPDK_CFLAGS"
-		LIBS="$LIBS $DPDK_LIBS"
-		AC_CHECK_FUNC(rte_eth_dev_count_avail)
-		AC_LBL_RESTORE_CHECK_STATE
-	fi
-
-	if test "$ac_cv_func_rte_eth_dev_count_avail" = yes; then
-		#
-		# We found a usable DPDK.
-		#
-		# Check whether the rte_ether.h file defines
-		# struct ether_addr or struct rte_ether_addr.
-		#
-		# ("API compatibility?  That's for losers!")
-		#
-		AC_LBL_SAVE_CHECK_STATE
-		CFLAGS="$CFLAGS $DPDK_CFLAGS"
-		LIBS="$LIBS $DPDK_LIBS"
-		AC_CHECK_TYPES(struct rte_ether_addr,,,
-		    [
-			#include <rte_ether.h>
-		    ])
-		AC_LBL_RESTORE_CHECK_STATE
-
-		#
-		# We can build with DPDK.
-		#
-		V_INCLS="$V_INCLS $DPDK_CFLAGS"
-		ADDITIONAL_LIBS="$ADDITIONAL_LIBS $DPDK_LIBS"
-		ADDITIONAL_LIBS_STATIC="$ADDITIONAL_LIBS_STATIC $DPDK_LIBS_STATIC"
-		REQUIRES_PRIVATE="$REQUIRES_PRIVATE libdpdk"
-		AC_DEFINE(PCAP_SUPPORT_DPDK, 1, [target host supports DPDK])
-		if test $V_PCAP != dpdk ; then
-			MODULE_C_SRC="$MODULE_C_SRC pcap-dpdk.c"
-		fi
-
-		#
-		# The last line of the output is:
-		# "checking for struct rte_ether_addr... yes"
-		# Make it clear what it means for the final result.
-		#
-		AC_MSG_NOTICE([building with DPDK])
-	else
-		#
-		# We didn't find a usable DPDK.
-		# If we required it (with --with-dpdk or --with-pcap=dpdk),
-		# fail with an appropriate message telling the user what
-		# the problem was.
-		#
-		if test "$found_dpdk" != yes; then
-			#
-			# Not found with pkg-config.  Note that we
-			# require that DPDK must be findable with
-			# pkg-config.
-			#
-			if test "$V_PCAP" = dpdk; then
-				#
-				# User requested DPDK-only capture support.
-				#
-				AC_MSG_ERROR(
-[DPDK support requested with --with-pcap=dpdk, but
-we couldn't find DPDK with pkg-config.  Make sure that pkg-config is
-installed, that DPDK 18.02.2 or later is installed, and that DPDK
-provides a .pc file.])
-			fi
-
-			if test "$want_dpdk" = yes; then
-				#
-				# User requested that libpcap include
-				# DPDK capture support.
-				#
-				AC_MSG_ERROR(
-[DPDK support requested with --with-dpdk, but we
-couldn't find DPDK with pkg-config.  Make sure that pkg-config
-is installed, that DPDK 18.02.2 or later is installed, and that
-DPDK provides .pc file.])
-			fi
-
-			#
-			# User didn't indicate whether they wanted DPDK
-			# or not; the last line of the output is one of:
-			# "checking for libdpdk with pkg-config... pkg-config not found"
-			# "checking for libdpdk with pkg-config... not found"
-			# This conveys the point and is the right amount of
-			# output when auto-detecting an optional module, so do
-			# not print anything else.
-			#
-		elif test "$ac_cv_func_rte_eth_dev_count_avail" != yes; then
-			#
-			# Found with pkg-config, but we couldn't compile
-			# a program that calls rte_eth_dev_count(); we
-			# probably have the developer package installed,
-			# but don't have a sufficiently recent version
-			# of DPDK.  Note that we need a sufficiently
-			# recent version of DPDK.
-			#
-			if test "$V_PCAP" = dpdk; then
-				#
-				# User requested DPDK-only capture support.
-				#
-				AC_MSG_ERROR(
-[DPDK support requested with --with-pcap=dpdk, but we
-can't compile libpcap with DPDK.  Make sure that DPDK 18.02.2 or later
-is installed.])
-			fi
-
-			if test "$want_dpdk" = yes; then
-				#
-				# User requested that libpcap include
-				# DPDK capture support.
-				#
-				AC_MSG_ERROR(
-[DPDK support requested with --with-dpdk, but
-we can't compile libpcap with DPDK.  Make sure that DPDK 18.02.2
-or later is DPDK is installed.])
-			fi
-
-			#
-			# User didn't indicate whether they wanted DPDK
-			# or not; the last line of the output is:
-			# "checking for rte_eth_dev_count_avail... no"
-			# Make it clear what it means for the final result.
-			#
-			AC_MSG_NOTICE([building without DPDK (present, but cannot be used)])
-		fi
-	fi
-fi
-AC_SUBST(PCAP_SUPPORT_DPDK)
 
 AC_ARG_ENABLE([bluetooth],
 [AS_HELP_STRING([--enable-bluetooth],[enable Bluetooth support @<:@default=yes, if support available@:>@])],
@@ -3051,6 +2926,7 @@ fi
 AC_PROG_INSTALL
 
 AC_CONFIG_HEADERS([config.h])
+AH_TOP([#define LIBPCAP_CONFIG_H])
 
 AC_SUBST(V_SHLIB_CCOPT)
 AC_SUBST(V_SHLIB_CMD)

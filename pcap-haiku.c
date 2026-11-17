@@ -112,8 +112,8 @@ pcap_read_haiku(pcap_t* handle, int maxPackets _U_, pcap_handler callback,
 	if (handle->fcode.bf_insns) {
 		// NB: pcapint_filter() takes the wire length and the captured
 		// length, not the snapshot length of the pcap_t handle.
-		if (pcapint_filter(handle->fcode.bf_insns, buffer, wireLength,
-		                   captureLength) == 0)
+		if (pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+		                   buffer, wireLength, captureLength) == 0)
 			goto drop;
 	}
 
@@ -451,6 +451,8 @@ get_if_flags(const char *name, bpf_u_int32 *flags, char *errbuf)
 {
 	if (validate_ifname(name, errbuf) < 0)
 		return PCAP_ERROR;
+
+	*flags |= PCAP_IF_NO_INJECT;
 
 	if (*flags & PCAP_IF_LOOPBACK ||
 	    ! strncmp(name, "tun", strlen("tun")) ||

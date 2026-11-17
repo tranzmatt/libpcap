@@ -171,10 +171,14 @@ You can get around this by installing GCC.
 	ftmacros.h	    - feature test macros
 	testprogs/TESTrun   - a script for "make check"
 	testprogs/TESTlib.pm - TESTrun helper file
+	testprogs/TESTmp.pm - TESTrun helper file
 	testprogs/TESTmt.pm - TESTrun helper file
 	testprogs/TESTst.pm - TESTrun helper file
+	testprogs/enumeratetest.c   - test program for various enumerations
 	testprogs/filtertest.c      - test program for BPF compiler
 	testprogs/findalldevstest.c - test program for pcap_findalldevs()
+	testprogs/test-util.c       - test program common routines
+	testprogs/test-util.h       - test program common prototypes
 	testprogs/translatetest.c   - test program for various translation functions
 	gencode.c	    - BPF code generation routines
 	gencode.h	    - BPF code generation definitions
@@ -218,8 +222,6 @@ You can get around this by installing GCC.
 	pcap-dbus.c	    - D-Bus capture support
 	pcap-dbus.h	    - D-Bus capture support
 	pcap-dlpi.c	    - Data Link Provider Interface support
-	pcap-dpdk.c	    - DPDK device support
-	pcap-dpdk.h	    - DPDK device support
 	pcap-haiku.c	    - Haiku capture support
 	pcap-hurd.c	    - GNU Hurd support
 	pcap-int.h	    - internal libpcap definitions

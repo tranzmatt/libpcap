@@ -15,11 +15,12 @@
 #include <endian.h>
 #include <limits.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #include "pcap-int.h"
 
 #if __BYTE_ORDER == __BIG_ENDIAN
-// Will need SWAPLL().
+// Will need PCAP_BSWAP_64().
 #include "pcap-util.h"
 #endif
 
@@ -123,14 +124,15 @@ static int dag_setnonblock(pcap_t *p, int nonblock);
  * Convert the return value of getenv() to an unsigned integer in the
  * range [0, UINT_MAX].
  *
- * If the environment variable is not set or is empty, return the default
- * value supplied as an argument.
+ * If the environment variable is not set or is empty, set *val to the default
+ * value supplied as an argument and return true.
  *
- * Otherwise, on success, return 1 and set *val to the value, and, on
- * error, return 0.
+ * Otherwise, on success, return true and set *val to the parsed value, and, on
+ * error, return false.
  */
-static int
-get_decuint_from_env(const char *envname, unsigned *val, unsigned defaultval)
+static bool
+get_decuint_from_env(const char *envname, unsigned *val,
+    const unsigned defaultval, char *errbuf)
 {
 	const char *env;
 
@@ -148,23 +150,23 @@ get_decuint_from_env(const char *envname, unsigned *val, unsigned defaultval)
 		ret = pcapint_get_decuint(env, NULL, val);
 		if (ret != 0) {
 			if (ret == EINVAL) {
-				snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+				snprintf(errbuf, PCAP_ERRBUF_SIZE,
 				    "invalid %s value: \"%s\" is not a valid unsigned number",
 				    envname, env);
 			} else if (ret == ERANGE) {
-				snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+				snprintf(errbuf, PCAP_ERRBUF_SIZE,
 				    "invalid %s value: \"%s\" is too large",
 				    envname, env);
 			} else {
-				pcapint_fmt_errmsg_for_errno(p->errbuf,
+				pcapint_fmt_errmsg_for_errno(errbuf,
 				    PCAP_ERRBUF_SIZE, ret,
 				    "invalid %s value: \"%s\" can't be parsed",
 				    envname, env);
 			}
-			return 0;
+			return false;
 		}
 	}
-	return 1;
+	return true;
 }
 
 static void
@@ -689,13 +691,14 @@ dag_read(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		 * depends on the card/stream slen; the snapshot length
 		 * configured for this pcap handle is p->snapshot.
 		 */
-		if ((p->fcode.bf_insns == NULL) || pcapint_filter(p->fcode.bf_insns, dp, packet_len, caplen)) {
-
+		if (p->fcode.bf_insns == NULL ||
+		    pcapint_filter(p->fcode.bf_insns, p->fcode.bf_len,
+		                   dp, packet_len, caplen)) {
 			/* convert between timestamp formats */
 			unsigned long long ts;
 
 #if __BYTE_ORDER == __BIG_ENDIAN
-			ts = SWAPLL(header->ts);
+			ts = PCAP_BSWAP_64(header->ts);
 #else
 			ts = header->ts;
 #endif // __BYTE_ORDER
@@ -840,10 +843,8 @@ dag_activate_tx(pcap_t *p)
 {
 	struct pcap_dag *pd = p->priv;
 
-	const char * env;
 	uint32_t iface;
-
-	if (!get_decuint_from_env(ENV_TX_IFACE, &iface, 0))
+	if (!get_decuint_from_env(ENV_TX_IFACE, &iface, 0, p->errbuf))
 		return PCAP_ERROR;
 	uint32_t ifcount = dag_config_get_interface_count(pd->dag_ref);
 	if (iface >= ifcount) {
@@ -855,7 +856,7 @@ dag_activate_tx(pcap_t *p)
 	if (iface > UINT8_MAX) {
 		snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 		    "invalid %s value: %u is too large (> %u)",
-		    ENV_TX_IFACE, ifacev, UINT8_MAX);
+		    ENV_TX_IFACE, iface, UINT8_MAX);
 	}
 	pd->tx_iface = (uint8_t)iface;
 
@@ -947,8 +948,6 @@ dag_activate_tx(pcap_t *p)
 static int dag_activate(pcap_t* p)
 {
 	struct pcap_dag *pd = p->priv;
-	char *s;
-	int n;
 	char * device = p->opt.device;
 	int ret;
 	dag_size_t mindata;
@@ -1128,12 +1127,13 @@ static int dag_activate(pcap_t* p)
 	pd->dag_mem_bottom = 0;
 	pd->dag_mem_top = 0;
 
+	unsigned n;
 	/*
 	 * Find out how many FCS bits we should strip.
 	 * Assume Rx FCS length to be 32 bits unless the user has
 	 * requested a different value, in which case validate it well.
 	 */
-	if (!get_decuint_from_env(ENV_RX_FCS_BITS, &n, 32)) {
+	if (!get_decuint_from_env(ENV_RX_FCS_BITS, &n, 32, p->errbuf)) {
 		ret = PCAP_ERROR;
 		goto failstop;
 	}
@@ -1154,7 +1154,7 @@ static int dag_activate(pcap_t* p)
 	/*
 	 * Did the user request that they not be stripped?
 	 */
-	if (!get_decuint_from_env(ENV_RX_FCS_NOSTRIP, &n, 0)) {
+	if (!get_decuint_from_env(ENV_RX_FCS_NOSTRIP, &n, 0, p->errbuf)) {
 		ret = PCAP_ERROR;
 		goto failstop;
 	}
@@ -1284,13 +1284,13 @@ pcap_t *dag_create(const char *device, char *ebuf, int *is_ours)
 	/* Yes - is "dag" followed by a number from 0 to DAG_MAX_BOARDS-1 */
 	cp += 3;
 	if (pcapint_get_decuint(cp, &cpend, &devnum) != 0) {
-		/* Not followe by a valid number */
+		/* Not followed by a valid number */
 		return NULL;
 	}
 	if (*cpend == ':') {
 		/* Followed by a stream number. */
 		if (pcapint_get_decuint(++cpend, NULL, &stream) != 0) {
-			/* Not followe by a valid number */
+			/* Not followed by a valid number */
 			return NULL;
 		}
 	} else if (*cpend != '\0') {
@@ -1427,8 +1427,25 @@ dag_stream_long_description(char *strbuf, const size_t strbufsize,
 		    inf->bus_id);
 }
 
+static uint32_t
+dag_flags(const int stream)
+{
+	/*
+	 * A DAG card associates a link status with each physical port, but not
+	 * with the data streams.  The number of ports is a matter of hardware,
+	 * the number of streams and how each stream associates with zero or
+	 * more ports is a matter of how the user configures the card.  In this
+	 * context libpcap uses the streams only (i.e. "dag0" is a shorthand
+	 * for "dag0:0"), thus the notion of link status does not apply to the
+	 * resulting libpcap DAG capture devices.
+	 */
+	return PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE |
+	    (RX_ONLY(stream) ? PCAP_IF_NO_INJECT : PCAP_IF_NO_CAPTURE);
+}
+
 /*
  * Add all DAG devices.
+ * This excludes vDAG Tx streams, which libpcap cannot use.
  */
 int
 dag_findalldevs(pcap_if_list_t *devlistp, char *errbuf)
@@ -1437,14 +1454,6 @@ dag_findalldevs(pcap_if_list_t *devlistp, char *errbuf)
 	int dagfd;
 	char description[256];
 	int stream, rxstreams;
-	// A DAG card associates a link status with each physical port, but not
-	// with the data streams.  The number of ports is a matter of hardware,
-	// the number of streams and how each stream associates with zero or
-	// more ports is a matter of how the user configures the card.  In this
-	// context libpcap uses the streams only (i.e. "dag0" is a shorthand
-	// for "dag0:0"), thus the notion of link status does not apply to the
-	// resulting libpcap DAG capture devices.
-	const bpf_u_int32 flags = PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE;
 	FILE * sysfsinfo = NULL;
 
 	/* Try all the DAGs 0-DAG_MAX_BOARDS */
@@ -1503,6 +1512,7 @@ dag_findalldevs(pcap_if_list_t *devlistp, char *errbuf)
 				if (bufsize > 0 &&
 				    (RX_ONLY(stream) || inf->device_code != PCI_DEVICE_ID_VDAG)) {
 					dag_device_description(description, sizeof(description), c);
+					const uint32_t flags = dag_flags(stream);
 					// a conditional shorthand device
 					if (stream == 0 &&
 					    pcapint_add_dev(devlistp, name, flags, description, errbuf) == NULL)
@@ -1538,7 +1548,16 @@ dag_findalldevs(pcap_if_list_t *devlistp, char *errbuf)
 #ifndef ENABLE_DAG_TX
 						if (TX_ONLY(stream))
 							continue;
+#else
+						/*
+						 * TODO: To tell whether the current device is a vDAG,
+						 * instead of comparing the device index with hard-coded
+						 * values parse the allocation type of the current stream.
+						 */
+						if (TX_ONLY(stream) && c >= 16 && c <= 31)
+							continue;
 #endif // ENABLE_DAG_TX
+						const uint32_t flags = dag_flags(stream);
 						// a conditional shorthand device
 						dag_device_description(description, sizeof(description), c);
 						if (stream == 0 &&

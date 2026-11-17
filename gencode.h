@@ -197,6 +197,39 @@
 #define MH_DPC		7
 #define MH_SLS		8
 
+/*
+ * Do this negation as unsigned arithmetic; that's
+ * what modern BPF engines do, and it guarantees
+ * that all possible values can be negated.  (Yeah,
+ * negating 0x80000000, the minimum signed 32-bit
+ * two's-complement value, results in 0x80000000,
+ * so it's still negative, but we *should* be doing
+ * all unsigned arithmetic here, to match what
+ * modern BPF engines do.)
+ *
+ * Express it as 0U - (unsigned value) so that we
+ * don't get compiler warnings about negating an
+ * unsigned value and don't get UBSan warnings
+ * about the result of negating 0x80000000 being
+ * undefined.
+ */
+#define UINT_NEG(x) (0U - (x))
+
+/*
+ * A left shift of more than the width of the type
+ * is undefined in C; we'll just treat it as shifting
+ * all the bits out.
+ */
+#define UINT32_LSH(val, bits) (((bits) < 32) ? (val) << (bits) : 0)
+
+/*
+ * A right shift of more than the width of the type
+ * is undefined in C; we'll just treat it as shifting
+ * all the bits out.
+ *
+ * The BPF interpreter in libpcap does the same.
+ */
+#define UINT32_RSH(val, bits) (((bits) < 32) ? (val) >> (bits) : 0)
 
 struct slist;
 
@@ -286,6 +319,7 @@ struct block {
  * A value of 0 for val[i] means the value is unknown.
  */
 #define VAL_UNKNOWN	0
+#define IS_KNOWN(block, atom) ((block)->val[(atom)] != VAL_UNKNOWN)
 
 struct arth {
 	struct block *b;	/* protocol checks */
@@ -438,5 +472,9 @@ int pcap_parse(void *, compiler_state_t *);
 /* XXX */
 #define JT(b)  ((b)->et.succ)
 #define JF(b)  ((b)->ef.succ)
+
+#define ERRSTR_DIV_BY_ZERO "division by zero"
+#define ERRSTR_MOD_BY_ZERO "modulo by zero"
+#define ERRSTR_SHIFT_BY_MORE "shift by more than 31 bits"
 
 #endif /* gencode_h */

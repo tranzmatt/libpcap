@@ -130,7 +130,10 @@ bt_findalldevs(pcap_if_list_t *devlistp, char *err_str)
 		 * the status to PCAP_IF_CONNECTION_STATUS_CONNECTED
 		 * or PCAP_IF_CONNECTION_STATUS_DISCONNECTED.
 		 */
-		if (pcapint_add_dev(devlistp, dev_name, PCAP_IF_WIRELESS, dev_descr, err_str)  == NULL)
+		if (pcapint_add_dev(devlistp, dev_name,
+		    PCAP_IF_NO_INJECT |
+		    PCAP_IF_WIRELESS,
+		    dev_descr, err_str)  == NULL)
 		{
 			ret = PCAP_ERROR;
 			break;
@@ -379,7 +382,8 @@ DIAG_ON_SIGN_COMPARE
 	pkth.caplen+=sizeof(pcap_bluetooth_h4_header);
 	pkth.len = pkth.caplen;
 	if (handle->fcode.bf_insns == NULL ||
-	    pcapint_filter(handle->fcode.bf_insns, pktd, pkth.len, pkth.caplen)) {
+	    pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+	                   pktd, pkth.len, pkth.caplen)) {
 		callback(user, &pkth, pktd);
 		return 1;
 	}

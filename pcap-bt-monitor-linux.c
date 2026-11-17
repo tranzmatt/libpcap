@@ -80,7 +80,9 @@ bt_monitor_findalldevs(pcap_if_list_t *devlistp, char *err_str)
      * for the "any" device.
      */
     if (pcapint_add_dev(devlistp, INTERFACE_NAME,
-                PCAP_IF_WIRELESS|PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
+                PCAP_IF_WIRELESS |
+                PCAP_IF_NO_INJECT |
+                PCAP_IF_CONNECTION_STATUS_NOT_APPLICABLE,
                 "Bluetooth Linux Monitor", err_str) == NULL)
     {
         ret = PCAP_ERROR;
@@ -153,7 +155,8 @@ DIAG_ON_SIGN_COMPARE
     bthdr->opcode = htons(hdr.opcode);
 
     if (handle->fcode.bf_insns == NULL ||
-        pcapint_filter(handle->fcode.bf_insns, pktd, pkth.len, pkth.caplen)) {
+        pcapint_filter(handle->fcode.bf_insns, handle->fcode.bf_len,
+                       pktd, pkth.len, pkth.caplen)) {
         callback(user, &pkth, pktd);
         return 1;
     }

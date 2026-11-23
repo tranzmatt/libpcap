@@ -7,7 +7,7 @@ add_custom_target(testprogs)
 
 macro(add_test_executable _executable)
   add_executable(${_executable} EXCLUDE_FROM_ALL
-    ${_executable}.c ${PROJECT_SOURCE_LIST_WIN32_C})
+    ${_executable}.c test-util.c ${PROJECT_SOURCE_LIST_WIN32_C})
   if(NOT C_ADDITIONAL_FLAGS STREQUAL "")
     set_target_properties(${_executable} PROPERTIES
       COMPILE_FLAGS ${C_ADDITIONAL_FLAGS})
@@ -29,6 +29,7 @@ endmacro()
 add_test_executable(activatetest)
 add_test_executable(can_set_rfmon_test)
 add_test_executable(capturetest)
+add_test_executable(fcodetest)
 add_test_executable(filtertest)
 add_test_executable(findalldevstest)
 add_test_executable(findalldevstest-perf)

@@ -2,7 +2,7 @@ DayOfTheWeek, Month DD, YYYY / The Tcpdump Group
   Summary for 1.11.1 libpcap release (so far!)
     Source code:
       Fix function names in two error messages.
-      Have pcap_fileno() return -1 rather than PCAP_ERRNO if the HANDLE
+      Have pcap_fileno() return -1 rather than PCAP_ERROR if the HANDLE
         is invalid, as the return value isn't a general error.
       Indicate no-capture and no-inject devices.
       Require libpcap [internal-only] config.h in [internal-only] pcap-int.h.
@@ -16,6 +16,8 @@ DayOfTheWeek, Month DD, YYYY / The Tcpdump Group
       mkdep: Use mktemp(1) if it is available.
       mkdep: Propagate compiler errors.
       Enable out-of-tree invocation of autogen.sh.
+      testprogs: Factor fcodetest out of filtertest.
+      Avoid some compiler builtins in Clang < 9.0.0.
     Packet filtering:
       Fix validation of "/", "%", "<<" and ">>" 2nd operand.
       Fix a dangling register index in "proto[expr]".
@@ -34,6 +36,8 @@ DayOfTheWeek, Month DD, YYYY / The Tcpdump Group
       Include sysfs rx_dropped in pcap_stat.ps_ifdrop (GH bug 1328).
     QNX:
       Fix DLT_PFSYNC definition on QNX 8.0.
+    Link-layer types:
+      Add LINKTYPE_ETW2/DLT_ETW2.
 
 Sunday, September 13, 2026 / The Tcpdump Group
   Summary for 1.11.0 libpcap release

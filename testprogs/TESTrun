@@ -43,13 +43,10 @@ use subs qw(
 	get_diff_flags
 	get_helper_module
 	get_lib_usage
-	init_tmpdir
 	mytmpfile
 	read_config_h
-	remove_tmpdir
 	result_failed
 	result_passed
-	result_skipped
 	result_terminated
 	result_timed_out
 	run_skip_test
@@ -94,7 +91,7 @@ use constant {
 	EX_USAGE => 64,
 	# In this libpcap version filtertest exits with EX_DATAERR if the user input
 	# is invalid and with other status codes for other (memory/file/etc) error
-	# conditions.  translatetest implements the same convention.
+	# conditions.  translatetest implements the same convention.  Idem fcodetest.
 	EX_DATAERR => 65,
 	# Likewise, EX_NOINPUT if pcap_open_offline() has failed.
 	EX_NOINPUT => 66,
@@ -117,9 +114,13 @@ use constant {
 my $diff_flags;
 my $timeout_bin;
 my $test_timeout;
-my $filtertest;
-my $translatetest;
-my $enumeratetest;
+my %testprog = (
+	filtertest => 'FILTERTEST_BIN',
+	translatetest => 'TRANSLATETEST_BIN',
+	enumeratetest => 'ENUMERATETEST_BIN',
+	fcodetest => 'FCODETEST_BIN',
+);
+my %testprog_bin;
 
 sub usage_text {
 	my $detailed = shift;
@@ -149,12 +150,14 @@ binary works.  If it is set (on macOS there is no default \"timeout\" and the
 binary from GNU coreutils package may be available as \"gtimeout\" only), the
 custom binary must work.
 
-FILTERTEST_BIN, TRANSLATETEST_BIN, ENUMERATETEST_BIN and CONFIG_H allow to
-specify custom paths to respective files if the current working directory is
-not the directory where the build output files go to.  Otherwise by default
-this script finds the files for both Autoconf and CMake, both in-tree and
-out-of-tree builds.
-
+The following environment variables allow to specify custom paths to respective
+files if the current working directory is not the directory where the build
+output files go to.  Otherwise by default this script finds the files for both
+Autoconf and CMake, both in-tree and out-of-tree builds.
+* CONFIG_H
+";
+	$ret .= "* $_\n" foreach sort values %testprog;
+	$ret .= "
 TIMEOUT_BIN allows to specify the path to a timeout(1) binary.
 
 TESTRUN_SHORT=1 generates a shorter list of tests (not recommended unless the
@@ -32747,6 +32750,8 @@ my %DLTfeatures = (
 	},
 	ETW => {
 	},
+	ETW2 => {
+	},
 	FC_2 => {
 	},
 	FC_2_WITH_FRAME_DELIMS => {
@@ -35249,6 +35254,7 @@ my %DLTnames = (
 	302 => 'EDK2_MM',
 	303 => 'DEBUG_ONLY',
 	304 => 'DECT_NR_TAP',
+	305 => 'ETW2',
 );
 # The conditional part is a subset of what "pcap/dlt.h" defines because
 # dlt_choices[] in pcap.c includes neither DLT_HIPPI nor DLT_HDLC nor
@@ -36027,10 +36033,10 @@ sub cbpfsfdata_from_list {
 		CBPFSF_SIGNATURE,
 		CBPFSF_ASCII_HINT,
 		1, # MajorVer
-		0, # MinorVer (ignored in filtertest)
-		0, # Flags (ignored in filtertest)
-		0, # SnapLen (ignored in filtertest)
-		0, # LinkTypeValue (ignored in filtertest)
+		0, # MinorVer (ignored in fcodetest)
+		0, # Flags (ignored in fcodetest)
+		0, # SnapLen (ignored in fcodetest)
+		0, # LinkTypeValue (ignored in fcodetest)
 		scalar @_, # InstructionCount
 	);
 	local *guard = sub {
@@ -37787,7 +37793,7 @@ sub run_generic_reject_test {
 
 sub common_filtertest_args {
 	my $test = shift;
-	my @args = ($filtertest);
+	my @args = ($testprog_bin{filtertest});
 	push @args, ('-s', $test->{snaplen}) if defined $test->{snaplen};
 	push @args, ('-m', $test->{netmask}) if defined $test->{netmask};
 	push @args, '-O' unless $test->{optimize};
@@ -37799,7 +37805,7 @@ sub common_fcode_args {
 	my $test = shift;
 	file_put_contents mytmpfile ($filename_filter), $test->{cbpfsfdata};
 	return (
-		$filtertest,
+		$testprog_bin{fcodetest},
 		'-i',
 		mytmpfile $filename_filter,
 	);
@@ -37847,7 +37853,7 @@ sub common_translatetest_args {
 	# as the second argument of translatetest and to get the expected
 	# behaviour from all known implementations of getopt().
 	#
-	my @args = ($translatetest, "--", $test->{cfuncname});
+	my @args = ($testprog_bin{translatetest}, '--', $test->{cfuncname});
 	# The hash key exists.  For the value Perl undef means C NULL and no
 	# command-line argument in the shell command, an empty Perl string
 	# means an empty C string and a quoted empty string argument in the
@@ -37931,7 +37937,7 @@ sub run_enumerate_test {
 	my $test = shift;
 	return run_generic_accept_test (
 		$test->{expected},
-		$enumeratetest,
+		$testprog_bin{enumeratetest},
 		'--', # for consistency with common_translatetest_args()
 		$test->{cfuncname}
 	);
@@ -38301,9 +38307,10 @@ if ($only_list) {
 }
 
 $diff_flags = get_diff_flags;
-$filtertest = detect_testprog 'filtertest', 'FILTERTEST_BIN';
-$translatetest = detect_testprog 'translatetest', 'TRANSLATETEST_BIN';
-$enumeratetest = detect_testprog 'enumeratetest', 'ENUMERATETEST_BIN';
+# For reasons unknown Perl map() does not work for this.
+foreach my $name (keys %testprog) {
+	$testprog_bin{$name} = detect_testprog ($name, $testprog{$name});
+}
 
 # Every test in this file uses an expression that under normal conditions takes
 # well under one second to process, so if a filtertest invocation is taking
@@ -38328,7 +38335,4 @@ if ($test_timeout eq '0') {
 	printf "INFO: Using a test timeout of %s second(s).\n", $test_timeout;
 }
 
-init_tmpdir 'libpcap_TESTrun';
-my $status = test_and_report @ready_to_run;
-remove_tmpdir;
-exit $status;
+exit test_and_report 'libpcap_TESTrun', @ready_to_run;

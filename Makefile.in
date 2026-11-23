@@ -360,6 +360,7 @@ EXTRA_DIST = \
 	testprogs/can_set_rfmon_test.c \
 	testprogs/capturetest.c \
 	testprogs/enumeratetest.c \
+	testprogs/fcodetest.c \
 	testprogs/filtertest.c \
 	testprogs/findalldevstest.c \
 	testprogs/findalldevstest.supp \
@@ -369,6 +370,8 @@ EXTRA_DIST = \
 	testprogs/opentest.c \
 	testprogs/reactivatetest.c \
 	testprogs/selpolltest.c \
+	testprogs/test-util.c \
+	testprogs/test-util.h \
 	testprogs/threadsignaltest.c \
 	testprogs/translatetest.c \
 	testprogs/unix.h \
